@@ -1,0 +1,24 @@
+[
+  {
+    "name": "Pantoprazole 40 mg",
+    "instruction": "Once daily · 30 min before breakfast",
+    "duration": "Until 23 Sep",
+    "next_dose": "Tomorrow · 7:30 AM",
+    "status": "Due tomorrow"
+  },
+  {
+    "name": "Paracetamol 500 mg",
+    "instruction": "After food · only if pain is present",
+    "duration": "As needed",
+    "next_dose": "No scheduled dose",
+    "status": "As needed"
+  },
+  {
+    "name": "Budesonide-formoterol inhaler",
+    "instruction": "1 puff morning and night",
+    "duration": "Ongoing",
+    "next_dose": "Today · 9:00 PM",
+    "status": "Due today"
+  }
+]
+

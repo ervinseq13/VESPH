@@ -1,0 +1,7 @@
+[
+  {"date": "22 Sep 2026", "department": "General Surgery", "doctor": "Dr. Rhea Mehta", "slots": ["11:30 AM", "02:15 PM"]},
+  {"date": "23 Sep 2026", "department": "General Surgery", "doctor": "Dr. Rhea Mehta", "slots": ["09:45 AM", "12:30 PM", "03:00 PM"]},
+  {"date": "24 Sep 2026", "department": "General Surgery", "doctor": "Dr. Kabir Sen", "slots": ["10:15 AM", "01:45 PM"]},
+  {"date": "01 Oct 2026", "department": "Pulmonology", "doctor": "Dr. Viraj Rao", "slots": ["11:00 AM", "04:00 PM"]}
+]
+

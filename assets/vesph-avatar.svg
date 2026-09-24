@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="VESPH Care">
+  <rect x="1" y="1" width="62" height="62" rx="17" fill="#0B6E69" stroke="#D7EFEB" stroke-width="2"/>
+  <rect x="27" y="15" width="10" height="34" rx="2" fill="#FFFFFF"/>
+  <rect x="15" y="27" width="34" height="10" rx="2" fill="#FFFFFF"/>
+</svg>

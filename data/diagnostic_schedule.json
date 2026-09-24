@@ -1,0 +1,5 @@
+[
+  {"id": "DS-109", "test": "Complete Blood Count (CBC)", "date": "20 Sep 2026", "time": "09:00 AM", "location": "Diagnostics · Ground floor", "status": "Booked", "preparation": "No fasting required"},
+  {"id": "DS-124", "test": "Ultrasound abdomen", "date": "24 Sep 2026", "time": "08:30 AM", "location": "Radiology · Level 1", "status": "Available", "preparation": "6 hours fasting"}
+]
+

@@ -1,0 +1,6 @@
+[
+  {"doctor": "Dr. Rhea Mehta", "department": "General Surgery", "available": ["22 Sep · 11:30 AM", "22 Sep · 02:15 PM", "23 Sep · 09:45 AM"]},
+  {"doctor": "Dr. Kabir Sen", "department": "General Surgery", "available": ["24 Sep · 10:15 AM", "24 Sep · 01:45 PM"]},
+  {"doctor": "Dr. Viraj Rao", "department": "Pulmonology", "available": ["01 Oct · 11:00 AM", "01 Oct · 04:00 PM"]}
+]
+

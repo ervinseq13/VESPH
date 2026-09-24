@@ -1,0 +1,36 @@
+[
+  {
+    "id": "APT-2048",
+    "date": "22 Sep 2026",
+    "time": "11:30 AM",
+    "department": "General Surgery",
+    "doctor": "Dr. Rhea Mehta",
+    "type": "Post-operative review",
+    "location": "OPD Block B · Room 214",
+    "status": "Awaiting confirmation",
+    "preparation": "Bring the latest CBC report and discharge file."
+  },
+  {
+    "id": "APT-2114",
+    "date": "01 Oct 2026",
+    "time": "04:00 PM",
+    "department": "Pulmonology",
+    "doctor": "Dr. Viraj Rao",
+    "type": "Routine asthma review",
+    "location": "OPD Block A · Room 108",
+    "status": "Confirmed",
+    "preparation": "Bring your inhaler and peak-flow diary."
+  },
+  {
+    "id": "APT-1910",
+    "date": "09 Sep 2026",
+    "time": "10:00 AM",
+    "department": "General Surgery",
+    "doctor": "Dr. Rhea Mehta",
+    "type": "Discharge consultation",
+    "location": "Ward 4C",
+    "status": "Completed",
+    "preparation": ""
+  }
+]
+

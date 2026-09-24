@@ -1,0 +1,30 @@
+[
+  {
+    "id": "REM-01",
+    "kind": "appointment",
+    "title": "Surgical follow-up",
+    "detail": "Dr. Rhea Mehta · 22 Sep · 11:30 AM",
+    "primary_interval": "72 hours before",
+    "second_interval": "24 hours before",
+    "next_action": "Confirm or choose another time"
+  },
+  {
+    "id": "REM-02",
+    "kind": "diagnostic",
+    "title": "CBC is tomorrow",
+    "detail": "20 Sep · 9:00 AM · Ground floor",
+    "primary_interval": "24 hours before",
+    "second_interval": "2 hours before",
+    "next_action": "No fasting required"
+  },
+  {
+    "id": "REM-03",
+    "kind": "document",
+    "title": "Insurance document needed",
+    "detail": "Upload the signed claim form before 24 Sep",
+    "primary_interval": "5 days before",
+    "second_interval": "1 day before",
+    "next_action": "1 document pending"
+  }
+]
+
