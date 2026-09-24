@@ -6,7 +6,7 @@ A single-screen Streamlit frontend for a healthcare capstone. It shows one synth
 
 - **Patient Summary Agent:** patient details, health history, diagnostic summary, medication summary, appointments, and discharge summary.
 - **Reminder Agent:** two-stage appointment reminders, confirm/reschedule actions, diagnostic and insurance-document reminders, medication reminders, and new booking requests.
-- **Escalation Agent:** deterministic handling for emergencies, missed appointments, unavailable doctors, wrong reports, and report reissue requests.
+- **Escalation Agent:** deterministic handling for emergencies, missed appointments, unavailable doctors, wrong reports, new care requests, and report reissues. Every escalation ends with resolution choices that the patient must confirm.
 - **One-screen layout:** patient record on the left, care workbench in the centre, and chat/actions on the right.
 - **Reliable demo mode:** no API key is required. The assistant answers only from local synthetic data, so a capstone presentation is not dependent on network access or LLM availability.
 
@@ -38,8 +38,8 @@ python -m unittest discover -s tests -v
 3. Move across the four care tabs: **Appointments**, **Diagnostics**, **Medication**, and **Discharge**. Click any record card to open its detail popup and download action.
 4. Use the **+** button in the assistant panel to request a new appointment or upload a diagnostic file.
 5. Ask “Summarise my latest report” and “What medicines am I taking?”
-6. Ask “This is someone else's report” to demonstrate the escalation path.
-7. Ask “I have severe pain, is this an emergency?” to demonstrate safe emergency routing.
+6. Ask “This is someone else's report,” then choose how the Records Desk should resolve it. The confirmed instruction is stored in the escalation record and acknowledged in chat.
+7. Ask “I have severe pain, is this an emergency?” to demonstrate immediate safety guidance followed by confirmation of how the patient is proceeding. The confirmation never replaces or delays the emergency instruction.
 
 ## Data included
 
@@ -57,6 +57,7 @@ All records are fictional and live under `data/`:
 | `doctor_schedule.json` | Doctor availability used by rescheduling |
 | `operation_schedule.json` | Operation-theatre record for the patient journey |
 | `reminders.json` | First and second reminder intervals |
+| `escalations.json` | Pending and patient-confirmed escalation resolutions |
 
 The separation is intentional: `data_store.py` is the only module that knows these are JSON files. It can later be replaced by APIs or a database without redesigning the screen.
 
@@ -69,21 +70,30 @@ Streamlit UI
    └── Chat and action panel
             │
             ▼
-      Intent / safety router
+      LangGraph orchestrator
       ├── Patient Summary Agent
       ├── Reminder Agent
       └── Escalation Agent
             │
             ▼
+      Ground-truth data tools
+            │
+            ▼
       Synthetic JSON repository
 ```
 
-## How the suggested stack should fit later
+## Agent and memory structure
 
-Keep the capstone in two stages so the demo stays understandable:
+The app now uses a deterministic LangGraph `StateGraph`; no API key is required. Clinical records are passed as run-scoped context, so they are fetched from the current source of truth on each turn rather than written into conversational memory.
 
-1. **Frontend milestone — this folder.** Streamlit and synthetic data prove the workflow and interaction design.
-2. **Agent/backend milestone.** Replace `agent.respond()` with a LangGraph workflow. Use LangChain adapters only where needed. Store report files in a private S3 bucket and keep structured appointments/medications in a proper database. Use ChromaDB only for retrieval over unstructured discharge notes and report text—not as the source of truth for schedules. Host Streamlit on EC2 only after the local flow is accepted.
+```text
+orchestrator/   graph, state schema, checkpointer, and long-term store
+agents/         plug-and-play summary, reminder, and escalation agents
+tools/          source-of-truth data boundary and ChromaDB retrieval seam
+scheduled/      reminder generation kept outside the conversational graph
+```
+
+The local capstone uses LangGraph's `InMemorySaver` for thread-scoped state and `InMemoryStore` for confirmed durable facts. For production, swap those backends for `PostgresSaver` and `PostgresStore` using Supabase Postgres. Replace `tools/db_tools.py` with Supabase reads/writes, store files in private S3, and use ChromaDB only for retrieval over report/discharge text—not as the source of truth for appointments or prescriptions.
 
 Suggested LangGraph nodes:
 
@@ -94,11 +104,11 @@ User message
       → summary retrieval
       → appointment/reminder action
       → records escalation
-   → confirmation card for every write
+   → explicit resolution confirmation for every escalation
    → response formatter
 ```
 
-The confirmation card is important: the assistant may prepare a booking, reschedule, upload, or escalation, but the patient should approve it before any real hospital system is changed.
+The escalation confirmation is important: the assistant opens a pending escalation, displays context-specific resolution choices at the end of the chat response, and records the patient's selection before the hospital team acts. Emergency replies still tell the patient to call immediately; the confirmation only records what they are doing.
 
 ## Production cautions
 

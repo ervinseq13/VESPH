@@ -1,2 +1,3 @@
 streamlit>=1.45,<2
+langgraph>=1.2,<2
 

@@ -34,6 +34,7 @@ def load_demo_data() -> dict[str, Any]:
         "doctor_schedule": _read_json("doctor_schedule.json"),
         "operation_schedule": _read_json("operation_schedule.json"),
         "reminders": _read_json("reminders.json"),
+        "escalations": _read_json("escalations.json"),
     }
     return deepcopy(data)
 

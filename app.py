@@ -5,8 +5,8 @@ from pathlib import Path
 
 import streamlit as st
 
-from agent import respond
 from data_store import load_demo_data
+from orchestrator.graph import build_orchestrator, resolve, run
 
 
 ASSET_DIR = Path(__file__).resolve().parent / "assets"
@@ -123,6 +123,10 @@ h1, h2, h3 { font-family: "Manrope", sans-serif !important; letter-spacing: -.02
 .alert-strip { background:var(--amber-bg); color:#704500; border-radius:11px; padding:9px 10px; font-size:10px; margin:8px 0; }
 .danger-strip { background:var(--red-bg); color:var(--red); border-radius:11px; padding:9px 10px; font-size:10px; margin:8px 0; }
 .safety-note { background:#EDF4F3; color:#536C69; border-radius:11px; padding:7px 9px; font-size:8px; line-height:1.35; margin-top:6px; }
+.escalation-confirm { background:var(--amber-bg); color:#704500; border-radius:11px; padding:8px 9px; font-size:9px; line-height:1.4; margin:2px 0 5px; }
+.escalation-confirm strong { display:block; color:#5D3900; margin-bottom:2px; }
+.escalation-resolved { background:var(--mint); color:var(--teal-dark); border-radius:9px; padding:6px 8px; font-size:8px; margin:2px 0 6px; }
+[class*="st-key-escalation_actions_"] .stButton > button { min-height:29px; padding:4px 7px; font-size:9px; line-height:1.2; }
 .agent-route { font-size:9px; color:var(--teal); font-weight:700; margin-top:-8px; margin-bottom:8px; padding-left:5px; }
 .footer-note { color:#7D8F8C; text-align:center; font-size:9px; margin-top:16px; }
 .timeline-label { color:#6C807D; font-size:9px; font-weight:700; letter-spacing:.09em; margin:9px 0 5px; }
@@ -184,6 +188,12 @@ div[data-testid="stMetricValue"] { font-size:16px; }
   [data-testid="stColumn"]:has(.left-panel-marker),
   [data-testid="stColumn"]:has(.right-panel-marker) { overflow:hidden; }
   [data-testid="stColumn"]:has(.right-panel-marker) { position:relative; }
+  .st-key-chat_history {
+    max-height:calc(100vh - 235px) !important;
+    min-height:245px;
+    overflow-y:auto;
+    padding-bottom:8px;
+  }
   .st-key-chat_dock {
     position:absolute;
     left:0;
@@ -239,6 +249,16 @@ initialize_state()
 DATA = st.session_state.care_data
 
 
+@st.cache_resource
+def get_orchestrator():
+    """Build the graph once so thread checkpoints survive Streamlit reruns."""
+
+    return build_orchestrator()
+
+
+ORCHESTRATOR = get_orchestrator()
+
+
 def panel_header(eyebrow: str, title: str, copy: str = "") -> None:
     st.markdown(
         f"""
@@ -271,13 +291,50 @@ def clipped(text: str, max_chars: int = 180) -> str:
 
 def add_chat_message(prompt: str) -> None:
     st.session_state.messages.append({"role": "user", "content": prompt})
-    reply = respond(prompt, DATA)
+    patient_id = DATA["patient"]["id"]
+    reply = run(ORCHESTRATOR, prompt, DATA, patient_id, thread_id=patient_id)
     st.session_state.messages.append(
         {
             "role": "assistant",
             "content": reply.message,
             "agent": reply.agent,
             "escalated": reply.escalated,
+            "escalation": reply.escalation,
+        }
+    )
+
+
+def confirm_escalation_resolution(message_index: int, resolution: str) -> None:
+    """Record a patient's resolution choice and close the pending chat prompt."""
+
+    source_message = st.session_state.messages[message_index]
+    escalation = source_message.get("escalation")
+    if not escalation or escalation.get("status") != "pending_confirmation":
+        return
+
+    patient_id = DATA["patient"]["id"]
+    result = resolve(
+        ORCHESTRATOR,
+        escalation["id"],
+        resolution,
+        DATA,
+        patient_id,
+        thread_id=patient_id,
+    )
+    source_message["escalation"] = result.escalation
+    st.session_state.messages.append(
+        {
+            "role": "user",
+            "content": f"Resolution confirmed: {resolution}",
+        }
+    )
+    st.session_state.messages.append(
+        {
+            "role": "assistant",
+            "content": result.message,
+            "agent": result.agent,
+            "escalated": result.escalated,
+            "escalation": None,
         }
     )
 
@@ -762,9 +819,9 @@ with right:
     st.markdown('<span class="right-panel-marker"></span>', unsafe_allow_html=True)
     panel_header("Care assistant", "")
 
-    chat_box = st.container(height=460, border=False)
+    chat_box = st.container(height=460, border=False, key="chat_history")
     with chat_box:
-        for message in st.session_state.messages:
+        for message_index, message in enumerate(st.session_state.messages):
             avatar = PATIENT_CHAT_AVATAR if message["role"] == "user" else VESPH_CHAT_AVATAR
             with st.chat_message(message["role"], avatar=avatar):
                 st.markdown(message["content"])
@@ -773,6 +830,27 @@ with right:
                     f'<div class="agent-route">{escape(message["agent"])}</div>',
                     unsafe_allow_html=True,
                 )
+            escalation = message.get("escalation")
+            if message["role"] == "assistant" and escalation:
+                if escalation.get("status") == "pending_confirmation":
+                    st.markdown(
+                        f'<div class="escalation-confirm"><strong>Resolution confirmation</strong>{escape(escalation["prompt"])}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    with st.container(key=f"escalation_actions_{escalation['id']}"):
+                        for option_index, option in enumerate(escalation["options"]):
+                            if st.button(
+                                option,
+                                key=f"resolve_{escalation['id']}_{option_index}",
+                                use_container_width=True,
+                            ):
+                                confirm_escalation_resolution(message_index, option)
+                                st.rerun()
+                elif escalation.get("resolution"):
+                    st.markdown(
+                        f'<div class="escalation-resolved">Confirmed plan · {escape(escalation["resolution"])}</div>',
+                        unsafe_allow_html=True,
+                    )
 
     with st.container(key="chat_dock"):
         with st.form("patient_chat_form", clear_on_submit=True):
