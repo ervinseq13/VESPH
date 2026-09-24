@@ -66,7 +66,7 @@ h1, h2, h3 { font-family: "Manrope", sans-serif !important; letter-spacing: -.02
 .brand-name { font: 700 17px/1.15 "Manrope", sans-serif; color:var(--ink); }
 .brand-sub { font-size: 11px; color:var(--muted); margin-top:3px; }
 
-.panel-title { margin: 3px 0 8px; }
+.panel-title { margin:0 0 8px; padding-top:2px; }
 .eyebrow { color:var(--teal); text-transform:uppercase; letter-spacing:.11em; font-size:10px; font-weight:700; }
 .panel-heading { color:var(--ink); font:700 17px/1.2 "Manrope", sans-serif; margin-top:3px; }
 .panel-copy { color:var(--muted); font-size:11px; margin-top:3px; }
@@ -186,13 +186,17 @@ div[data-testid="stMetricValue"] { font-size:16px; }
   [data-testid="stColumn"]:has(.right-panel-marker) {
     height:calc(100vh - 2rem);
     min-height:0;
+    box-sizing:border-box;
+    padding-top:8px;
+    padding-bottom:10px;
   }
   [data-testid="stColumn"]:has(.left-panel-marker),
   [data-testid="stColumn"]:has(.right-panel-marker) { overflow:hidden; }
   [data-testid="stColumn"]:has(.right-panel-marker) { position:relative; }
-  .st-key-chat_history {
-    max-height:calc(100vh - 235px) !important;
-    min-height:245px;
+  .stApp .st-key-chat_history {
+    height:calc(100vh - 19.1rem) !important;
+    min-height:calc(100vh - 19.1rem) !important;
+    max-height:calc(100vh - 19.1rem) !important;
     overflow-y:auto;
     padding-bottom:8px;
   }
@@ -200,7 +204,7 @@ div[data-testid="stMetricValue"] { font-size:16px; }
     position:absolute;
     left:0;
     right:0;
-    bottom:24px;
+    bottom:76px;
     gap:6px !important;
   }
   .st-key-chat_dock [data-testid="stVerticalBlock"] { gap:6px !important; }
@@ -839,7 +843,7 @@ with right:
     st.markdown('<span class="right-panel-marker"></span>', unsafe_allow_html=True)
     panel_header("Care assistant", "")
 
-    chat_box = st.container(height=460, border=False, key="chat_history")
+    chat_box = st.container(border=False, key="chat_history")
     with chat_box:
         for message_index, message in enumerate(st.session_state.messages):
             avatar = PATIENT_CHAT_AVATAR if message["role"] == "user" else VESPH_CHAT_AVATAR
@@ -873,31 +877,33 @@ with right:
                     )
 
     with st.container(key="chat_dock"):
-        with st.form("patient_chat_form", clear_on_submit=True):
-            upload_col, prompt_col, send_col = st.columns([0.18, 1, 0.18], gap="small")
-            with upload_col:
-                add_clicked = st.form_submit_button(
-                    "",
-                    key="chat_upload_submit",
-                    icon=":material/upload_file:",
-                    use_container_width=True,
-                    help="Upload or manually add a care record",
-                )
-            with prompt_col:
-                prompt = st.text_input(
-                    "Message",
-                    placeholder="Ask about your care…",
-                    label_visibility="collapsed",
-                )
-            with send_col:
-                submitted = st.form_submit_button(
-                    "",
-                    key="chat_send_submit",
-                    icon=":material/send:",
-                    type="primary",
-                    use_container_width=True,
-                    help="Send message",
-                )
+        upload_col, form_col = st.columns([0.18, 1.18], gap="small")
+        with upload_col:
+            add_clicked = st.button(
+                "",
+                key="chat_upload_button",
+                icon=":material/upload_file:",
+                use_container_width=True,
+                help="Upload or manually add a care record",
+            )
+        with form_col:
+            with st.form("patient_chat_form", clear_on_submit=True):
+                prompt_col, send_col = st.columns([1, 0.18], gap="small")
+                with prompt_col:
+                    prompt = st.text_input(
+                        "Message",
+                        placeholder="Ask about your care…",
+                        label_visibility="collapsed",
+                    )
+                with send_col:
+                    submitted = st.form_submit_button(
+                        "",
+                        key="chat_send_submit",
+                        icon=":material/send:",
+                        type="primary",
+                        use_container_width=True,
+                        help="Send message",
+                    )
         if add_clicked:
             add_item_dialog("Diagnostic report")
         if submitted and prompt.strip():
