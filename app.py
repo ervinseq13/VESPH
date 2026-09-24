@@ -5,8 +5,10 @@ from pathlib import Path
 
 import streamlit as st
 
+from chat_service import answer_chat
 from data_store import load_demo_data
-from orchestrator.graph import build_orchestrator, resolve, run
+from integrations import IntegrationHub, IntegrationSettings
+from orchestrator.graph import build_orchestrator, resolve
 
 
 ASSET_DIR = Path(__file__).resolve().parent / "assets"
@@ -259,6 +261,16 @@ def get_orchestrator():
 ORCHESTRATOR = get_orchestrator()
 
 
+@st.cache_resource
+def get_integrations() -> IntegrationHub:
+    """Create server-only clients from Streamlit secrets or local env vars."""
+
+    return IntegrationHub(IntegrationSettings.from_sources(st.secrets))
+
+
+INTEGRATIONS = get_integrations()
+
+
 def panel_header(eyebrow: str, title: str, copy: str = "") -> None:
     st.markdown(
         f"""
@@ -292,7 +304,15 @@ def clipped(text: str, max_chars: int = 180) -> str:
 def add_chat_message(prompt: str) -> None:
     st.session_state.messages.append({"role": "user", "content": prompt})
     patient_id = DATA["patient"]["id"]
-    reply = run(ORCHESTRATOR, prompt, DATA, patient_id, thread_id=patient_id)
+    reply = answer_chat(
+        ORCHESTRATOR,
+        INTEGRATIONS,
+        prompt,
+        DATA,
+        patient_id,
+        recent_messages=st.session_state.messages[:-1],
+        thread_id=patient_id,
+    )
     st.session_state.messages.append(
         {
             "role": "assistant",
@@ -905,6 +925,6 @@ with right:
 
 
 st.markdown(
-    '<div class="footer-note">Capstone prototype · All patient information shown is synthetic · No data leaves this session</div>',
+    '<div class="footer-note">Capstone prototype · Synthetic patient data · Supported open-ended questions use Groq when configured</div>',
     unsafe_allow_html=True,
 )

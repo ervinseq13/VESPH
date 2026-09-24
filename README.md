@@ -8,7 +8,8 @@ A single-screen Streamlit frontend for a healthcare capstone. It shows one synth
 - **Reminder Agent:** two-stage appointment reminders, confirm/reschedule actions, diagnostic and insurance-document reminders, medication reminders, and new booking requests.
 - **Escalation Agent:** deterministic handling for emergencies, missed appointments, unavailable doctors, wrong reports, new care requests, and report reissues. Every escalation ends with resolution choices that the patient must confirm.
 - **One-screen layout:** patient record on the left, care workbench in the centre, and chat/actions on the right.
-- **Reliable demo mode:** no API key is required. The assistant answers only from local synthetic data, so a capstone presentation is not dependent on network access or LLM availability.
+- **Reliable demo mode:** deterministic safety and care routes continue to work from local synthetic data. Groq enhances unsupported open-ended questions when configured, with a local fallback if it is unavailable.
+- **Chat-accessible readiness check:** ask “Check connections” to validate Groq and Supabase from the deployed Streamlit server without displaying secret values or assuming tables already exist.
 
 ## Run locally
 
@@ -20,6 +21,18 @@ py -m venv .venv
 pip install -r requirements.txt
 streamlit run app.py
 ```
+
+For local integration testing, create `.streamlit/secrets.toml` (never commit it):
+
+```toml
+LLM_API_KEY = "your-groq-key"
+SUPABASE_URL = "https://your-project.supabase.co"
+SUPABASE_KEY = "your-publishable-or-anon-key"
+# Optional. Defaults to the current production model below.
+GROQ_MODEL = "openai/gpt-oss-20b"
+```
+
+Use only a Supabase publishable/anon key in this user-facing application—never a service-role or secret key. The same names can be added in Streamlit Community Cloud under **App settings → Secrets**.
 
 If `py` is not available, install Python 3.11+ and run the equivalent commands with `python`.
 
@@ -84,7 +97,7 @@ Streamlit UI
 
 ## Agent and memory structure
 
-The app now uses a deterministic LangGraph `StateGraph`; no API key is required. Clinical records are passed as run-scoped context, so they are fetched from the current source of truth on each turn rather than written into conversational memory.
+The app uses a deterministic LangGraph `StateGraph` for safety-critical routing. Clinical records are passed as run-scoped context, so they are fetched from the current source of truth on each turn rather than written into conversational memory. If `LLM_API_KEY` is configured, only router fallback questions go to Groq with a constrained copy of the synthetic patient record.
 
 ```text
 orchestrator/   graph, state schema, checkpointer, and long-term store
@@ -94,6 +107,8 @@ scheduled/      reminder generation kept outside the conversational graph
 ```
 
 The local capstone uses LangGraph's `InMemorySaver` for thread-scoped state and `InMemoryStore` for confirmed durable facts. For production, swap those backends for `PostgresSaver` and `PostgresStore` using Supabase Postgres. Replace `tools/db_tools.py` with Supabase reads/writes, store files in private S3, and use ChromaDB only for retrieval over report/discharge text—not as the source of truth for appointments or prescriptions.
+
+`SUPABASE_URL` and `SUPABASE_KEY` are initialized today, but the app deliberately does not query clinical tables until their schema and row-level security policies are finalized. The connection check validates the project endpoint and key through Supabase Auth, while synthetic JSON remains the declared source of truth. This avoids coupling the agent to placeholder table names.
 
 Suggested LangGraph nodes:
 
