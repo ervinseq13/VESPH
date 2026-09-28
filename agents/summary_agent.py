@@ -1,4 +1,10 @@
-"""Patient Summary Agent backed only by the current care record."""
+"""Patient Summary Agent for grounded, read-only record explanations.
+
+The agent owns health-overview, medication, diagnostic, and discharge intents.
+It reads only the current ``care_data`` supplied as run context and does not
+modify records. If no detailed branch matches, its generic Router response tells
+``chat_service`` that an open-ended question may be offered to Groq.
+"""
 
 from __future__ import annotations
 
@@ -31,6 +37,8 @@ SUMMARY_TERMS = (
 
 
 def _matches(query: str) -> bool:
+    """Claim summary-related phrases; graph priority resolves any overlap."""
+
     return any(term in query for term in SUMMARY_TERMS)
 
 
@@ -46,6 +54,8 @@ def _reply(message: str, route: str) -> dict:
 def _handle(
     state: OrchestratorState, runtime: Runtime[OrchestratorContext]
 ) -> dict:
+    """Build a patient-friendly answer using only the current demo record."""
+
     text = state.get("query", "").lower().strip()
     data = runtime.context.care_data
     patient = data["patient"]
@@ -111,6 +121,8 @@ def _handle(
 
 
 def build() -> AgentSpec:
+    """Expose this specialist through the common orchestrator contract."""
+
     return AgentSpec(
         name="summary_agent",
         description="Answers grounded questions about patient records and recovery.",

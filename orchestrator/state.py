@@ -1,4 +1,9 @@
-"""State and run-scoped context for the VESPH LangGraph workflow."""
+"""Data contracts shared by the VESPH LangGraph supervisor and specialists.
+
+``OrchestratorState`` is eligible for thread checkpointing. In contrast,
+``OrchestratorContext`` exists only for one invocation, keeping the full current
+patient record out of saved conversation state.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +16,8 @@ EscalationStatus = Literal["pending_confirmation", "confirmed"]
 
 
 class EscalationState(TypedDict, total=False):
+    """Pending or confirmed hospital-team action shown back to the patient."""
+
     id: str
     category: str
     reason: str
@@ -21,12 +28,20 @@ class EscalationState(TypedDict, total=False):
 
 
 class ConversationMessage(TypedDict, total=False):
+    """Minimal message shape accumulated by LangGraph checkpoints."""
+
     role: Literal["user", "assistant"]
     content: str
     agent: str
 
 
 class OrchestratorState(TypedDict, total=False):
+    """Checkpointable inputs and outputs passed between graph nodes.
+
+    The ``add`` reducer appends new messages instead of replacing prior thread
+    history. Other fields describe only the current graph action/result.
+    """
+
     messages: Annotated[list[ConversationMessage], add]
     action: Literal["message", "resolve_escalation"]
     query: str
@@ -40,7 +55,12 @@ class OrchestratorState(TypedDict, total=False):
 
 @dataclass(frozen=True)
 class OrchestratorContext:
-    """Data available for one run but deliberately excluded from checkpoints."""
+    """Fresh data available for one run but excluded from checkpoints.
+
+    Specialists read the current mutable demo record through ``care_data``.
+    Keeping it here avoids stale clinical snapshots in conversation memory and
+    provides the seam where a future Supabase-backed record can be supplied.
+    """
 
     patient_id: str
     care_data: dict[str, Any]
