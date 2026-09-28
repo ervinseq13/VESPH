@@ -1,0 +1,285 @@
+#pip install faker
+
+import datetime
+import random
+import uuid
+from faker import Faker
+
+fake = Faker()
+Faker.seed(42)
+random.seed(42)
+
+TOTAL_RECORDS = 1000
+
+# Pre-defined domain values & enums
+DEPARTMENTS = ["Cardiology", "Neurology", "Orthopedics", "General Medicine", "Pediatrics", "Oncology", "Dermatology", "Surgery"]
+APPOINTMENT_TYPES = ["Routine Checkup", "Follow-up", "Emergency", "Consultation", "Telehealth"]
+SCHEDULED_ROLES = ["Patient", "Receptionist", "Primary Care Physician", "Nurse", "Call Center Agent"]
+APPOINTMENT_STATUSES = ["Scheduled", "Completed", "Cancelled", "No-show"]
+ORDER_STATUSES = ["Pending", "In Progress", "Completed", "Cancelled"]
+TEST_CATEGORIES = ["Hematology", "Biochemistry", "Radiology", "Microbiology", "Pathology"]
+OPERATION_STATUSES = ["Scheduled", "In Progress", "Completed", "Postponed", "Cancelled"]
+BILLING_STATUSES = ["Paid", "Pending", "Failed", "Partially Paid", "Claim Submitted"]
+PAYMENT_METHODS = ["Credit Card", "Debit Card", "Cash", "UPI", "Net Banking", "Insurance Direct"]
+TICKET_CATEGORIES = ["Billing Discrepancy", "Clinical Delay", "Staff Behavior", "Medication Query", "Appointment Reschedule"]
+TICKET_PRIORITIES = ["Low", "Medium", "High", "Critical"]
+TICKET_STATUSES = ["Open", "In Review", "Resolved", "Closed"]
+STAFF_ROLES = ["Billing Specialist", "Patient Care Coordinator", "Duty Doctor", "Head Nurse"]
+DOSAGE_FORMS = ["Tablet", "Capsule", "Syrup", "Injection", "Ointment"]
+
+def sql_str(val):
+    if val is None:
+        return "NULL"
+    if isinstance(val, (int, float)):
+        return str(val)
+    if isinstance(val, bool):
+        return "TRUE" if val else "FALSE"
+    # Escape single quotes for SQL
+    cleaned = str(val).replace("'", "''")
+    return f"'{cleaned}'"
+
+print("Generating mock data...")
+
+# 1. Doctors (generate 50 doctors to serve 1,000 patients and appointments)
+doctors = []
+for _ in range(50):
+    doctors.append({
+        "doctor_id": str(uuid.uuid4()),
+        "doctor_name": f"Dr. {fake.name()}",
+        "qualifications": random.choice(["MBBS, MD", "MBBS, MS", "MBBS, DNB", "MD, DM", "MBBS"]),
+        "department": random.choice(DEPARTMENTS),
+        "room_no": f"Room-{random.randint(101, 499)}",
+        "contact_phone": fake.phone_number()[:20],
+        "contact_email": fake.unique.company_email()[:100],
+        "is_active": True
+    })
+
+# 2. Medicines (50 catalog entries)
+medicines = []
+for _ in range(50):
+    medicines.append({
+        "medicine_id": str(uuid.uuid4()),
+        "brand_name": fake.word().capitalize() + random.choice(["ex", "ol", "in", "med", "cid"]),
+        "generic_name": fake.word().capitalize() + " " + random.choice(["Hydrochloride", "Sodium", "Phosphate", "Trihydrate"]),
+        "dosage_form": random.choice(DOSAGE_FORMS)
+    })
+
+# 3. Patients (1,000 records)
+patients = []
+for _ in range(TOTAL_RECORDS):
+    primary_doc = random.choice(doctors)
+    patients.append({
+        "patient_id": str(uuid.uuid4()),
+        "first_name": fake.first_name()[:50],
+        "last_name": fake.last_name()[:50],
+        "date_of_birth": fake.date_of_birth(minimum_age=1, maximum_age=90).strftime('%Y-%m-%d'),
+        "gender": random.choice(["Male", "Female", "Other"]),
+        "blood_type": random.choice(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]),
+        "contact_phone": fake.phone_number()[:20],
+        "contact_email": fake.email()[:100],
+        "address": fake.address().replace('\n', ', '),
+        "emergency_contact_name": fake.name()[:100],
+        "emergency_contact_phone": fake.phone_number()[:20],
+        "primary_doctor_id": primary_doc["doctor_id"],
+        "insurance_provider": random.choice(["Star Health", "Blue Cross", "Aetna", "UnitedHealth", None]),
+        "insurance_policy_no": fake.bothify(text="POL-######-??").upper() if random.random() > 0.3 else None,
+        "patient_summary": fake.sentence(nb_words=10),
+        "created_at": fake.date_time_between(start_date="-2y", end_date="-1y").strftime('%Y-%m-%d %H:%M:%S')
+    })
+
+# 4. Appointments (1,000 records)
+appointments = []
+for i in range(TOTAL_RECORDS):
+    pat = patients[i]
+    doc = random.choice(doctors)
+    appt_time = fake.date_time_between(start_date="-1y", end_date="now")
+    appointments.append({
+        "appointment_id": str(uuid.uuid4()),
+        "patient_id": pat["patient_id"],
+        "doctor_id": doc["doctor_id"],
+        "appointment_type": random.choice(APPOINTMENT_TYPES),
+        "appointment_datetime": appt_time.strftime('%Y-%m-%d %H:%M:%S'),
+        "scheduled_by_role": random.choice(SCHEDULED_ROLES),
+        "status": random.choice(APPOINTMENT_STATUSES),
+        "location": f"Wing {random.choice(['A', 'B', 'C'])}, Floor {random.randint(1, 4)}",
+        "reminders_sent_count": random.randint(0, 3),
+        "appointment_summary": fake.sentence(nb_words=8),
+        "created_at": (appt_time - datetime.timedelta(days=random.randint(1, 7))).strftime('%Y-%m-%d %H:%M:%S'),
+        "updated_at": appt_time.strftime('%Y-%m-%d %H:%M:%S')
+    })
+
+# 5. Consultations (1,000 records, mapped 1:1 to appointments)
+consultations = []
+for i in range(TOTAL_RECORDS):
+    appt = appointments[i]
+    appt_dt = datetime.datetime.strptime(appt["appointment_datetime"], '%Y-%m-%d %H:%M:%S')
+    followup_date = (appt_dt + datetime.timedelta(days=random.randint(7, 30))).strftime('%Y-%m-%d')
+    consultations.append({
+        "consultation_id": str(uuid.uuid4()),
+        "appointment_id": appt["appointment_id"],
+        "patient_id": appt["patient_id"],
+        "doctor_id": appt["doctor_id"],
+        "symptoms": fake.sentence(nb_words=6),
+        "diagnosis": fake.sentence(nb_words=5),
+        "treatment_plan": fake.sentence(nb_words=10),
+        "bp_systolic": random.randint(110, 145),
+        "bp_diastolic": random.randint(70, 95),
+        "sugar_reading": round(random.uniform(80.0, 180.0), 2),
+        "height_cm": round(random.uniform(150.0, 190.0), 2),
+        "weight_kg": round(random.uniform(50.0, 100.0), 2),
+        "consultation_summary": fake.sentence(nb_words=12),
+        "followup_recommended_date": followup_date,
+        "created_at": appt["appointment_datetime"],
+        "recommended_consultation": "Cardiology referral" if random.random() > 0.7 else None,
+        "recommended_diagnostics": "Complete Blood Count, Lipid Profile" if random.random() > 0.5 else None,
+        "recommended_prescription": "Anti-inflammatory and supportive vitamins" if random.random() > 0.4 else None,
+        "recommended_operation": "Elective Arthroscopy" if random.random() > 0.9 else None
+    })
+
+# 6. Prescription Details (1,000 records)
+prescriptions = []
+for i in range(TOTAL_RECORDS):
+    cons = consultations[i]
+    med = random.choice(medicines)
+    start_dt = datetime.datetime.strptime(cons["created_at"], '%Y-%m-%d %H:%M:%S').date()
+    prescriptions.append({
+        "prescription_item_id": str(uuid.uuid4()),
+        "consultation_id": cons["consultation_id"],
+        "patient_id": cons["patient_id"],
+        "medicine_id": med["medicine_id"],
+        "dosage": random.choice(["250mg", "500mg", "10ml", "1 tablet", "2 puffs"]),
+        "frequency_per_day": random.choice(["Once daily", "Twice daily", "Thrice daily", "SOS / as needed"]),
+        "duration_days": random.randint(3, 30),
+        "start_date": start_dt.strftime('%Y-%m-%d'),
+        "is_taken": random.choice([True, False]),
+        "refill_needed": random.choice([True, False]),
+        "instructions": random.choice(["Take after meals", "Take on an empty stomach", "Drink plenty of water"])
+    })
+
+# 7. Diagnostics (1,000 records)
+diagnostics_orders = []
+for i in range(TOTAL_RECORDS):
+    cons = consultations[i]
+    diagnostics_orders.append({
+        "order_id": str(uuid.uuid4()),
+        "appointment_id": cons["appointment_id"],
+        "consultation_id": cons["consultation_id"],
+        "patient_id": cons["patient_id"],
+        "ordered_by_doctor_id": cons["doctor_id"],
+        "order_status": random.choice(ORDER_STATUSES),
+        "order_datetime": cons["created_at"]
+    })
+
+# 8. Diagnostics Results (1,000 records mapped 1:1 to orders)
+diagnostics_results = []
+for i in range(TOTAL_RECORDS):
+    order = diagnostics_orders[i]
+    order_dt = datetime.datetime.strptime(order["order_datetime"], '%Y-%m-%d %H:%M:%S')
+    result_dt = order_dt + datetime.timedelta(hours=random.randint(2, 48))
+    diagnostics_results.append({
+        "result_id": str(uuid.uuid4()),
+        "order_id": order["order_id"],
+        "test_category": random.choice(TEST_CATEGORIES),
+        "test_name": random.choice(["Hemoglobin", "Serum Creatinine", "Chest X-Ray", "HbA1c", "Lipid Profile"]),
+        "result_value": f"{round(random.uniform(5.0, 150.0), 2)}",
+        "reference_range": "10.0 - 120.0 mg/dL",
+        "result_summary": random.choice(["Within normal limits", "Slightly elevated", "Follow-up test advised"]),
+        "report_file_url": f"https://hospital.storage.local/reports/{uuid.uuid4()}.pdf",
+        "result_datetime": result_dt.strftime('%Y-%m-%d %H:%M:%S')
+    })
+
+# 9. Operations (1,000 records)
+operations = []
+for i in range(TOTAL_RECORDS):
+    appt = appointments[i]
+    surgeon = random.choice(doctors)
+    start_time = fake.date_time_between(start_date="-1y", end_date="now")
+    end_time = start_time + datetime.timedelta(minutes=random.randint(45, 240))
+    status = random.choice(OPERATION_STATUSES)
+    operations.append({
+        "operation_id": str(uuid.uuid4()),
+        "appointment_id": appt["appointment_id"],
+        "patient_id": appt["patient_id"],
+        "lead_surgeon_id": surgeon["doctor_id"],
+        "operation_name": random.choice(["Appendectomy", "Cholecystectomy", "Coronary Bypass", "C-Section", "Knee Replacement"]),
+        "operation_status": status,
+        "pre_op_summary": fake.sentence(nb_words=8),
+        "post_op_summary": fake.sentence(nb_words=8) if status == "Completed" else None,
+        "discharge_summary": fake.sentence(nb_words=10) if status == "Completed" else None,
+        "scheduled_start_time": start_time.strftime('%Y-%m-%d %H:%M:%S'),
+        "actual_end_time": end_time.strftime('%Y-%m-%d %H:%M:%S') if status == "Completed" else None
+    })
+
+# 10. Payment Details (1,000 records)
+payments = []
+for i in range(TOTAL_RECORDS):
+    appt = appointments[i]
+    total_bill = round(random.uniform(50.0, 5000.0), 2)
+    insurance_cov = round(total_bill * random.choice([0.0, 0.5, 0.8, 1.0]), 2)
+    patient_payable = round(total_bill - insurance_cov, 2)
+    payments.append({
+        "payment_id": str(uuid.uuid4()),
+        "appointment_id": appt["appointment_id"],
+        "patient_id": appt["patient_id"],
+        "billing_amount": total_bill,
+        "insurance_covered_amount": insurance_cov,
+        "patient_payable_amount": patient_payable,
+        "billing_status": random.choice(BILLING_STATUSES),
+        "payment_method": random.choice(PAYMENT_METHODS),
+        "transaction_reference": f"TXN-{fake.bothify(text='????-########').upper()}",
+        "billing_datetime": appt["appointment_datetime"]
+    })
+
+# 11. Escalation Agent Data (1,000 records)
+escalations = []
+for i in range(TOTAL_RECORDS):
+    appt = appointments[i]
+    created = fake.date_time_between(start_date="-6m", end_date="now")
+    status = random.choice(TICKET_STATUSES)
+    resolved = created + datetime.timedelta(hours=random.randint(1, 72)) if status in ["Resolved", "Closed"] else None
+    escalations.append({
+        "ticket_id": str(uuid.uuid4()),
+        "patient_id": appt["patient_id"],
+        "appointment_id": appt["appointment_id"],
+        "category": random.choice(TICKET_CATEGORIES),
+        "priority": random.choice(TICKET_PRIORITIES),
+        "status": status,
+        "ai_detected_reason": fake.sentence(nb_words=10),
+        "assigned_staff_role": random.choice(STAFF_ROLES),
+        "created_at": created.strftime('%Y-%m-%d %H:%M:%S'),
+        "resolved_at": resolved.strftime('%Y-%m-%d %H:%M:%S') if resolved else None,
+        "resolution_notes": fake.sentence(nb_words=12) if resolved else None
+    })
+
+# Write to SQL dump file
+output_file = "hospital_mock_data.sql"
+with open(output_file, "w", encoding="utf-8") as f:
+    f.write("-- Generated mock SQL data (1,000 records)\n")
+    f.write("BEGIN TRANSACTION;\n\n")
+
+    def dump_table(table_name, dataset):
+        if not dataset:
+            return
+        columns = list(dataset[0].keys())
+        col_list = ", ".join([f"`{c}`" for c in columns])
+        f.write(f"-- Table: {table_name}\n")
+        for row in dataset:
+            vals = ", ".join([sql_str(row[c]) for c in columns])
+            f.write(f"INSERT INTO `{table_name}` ({col_list}) VALUES ({vals});\n")
+        f.write("\n")
+
+    dump_table("doctors", doctors)
+    dump_table("medicines", medicines)
+    dump_table("patients", patients)
+    dump_table("appointments", appointments)
+    dump_table("consultations", consultations)
+    dump_table("prescription_details", prescriptions)
+    dump_table("diagnostics", diagnostics_orders)
+    dump_table("diagnostics_results", diagnostics_results)
+    dump_table("operation", operations)
+    dump_table("payment_details", payments)
+    dump_table("escalation_agent_data", escalations)
+
+    f.write("COMMIT;\n")
+
+print(f"Successfully generated 1,000 records for each primary table into '{output_file}'.")
