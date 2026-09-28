@@ -1,4 +1,11 @@
-"""Escalation Agent with explicit patient resolution confirmation."""
+"""Escalation Agent for safety-sensitive or staff-assisted follow-up needs.
+
+This specialist has first routing priority. It handles possible emergencies,
+incorrect/reissued reports, unavailable clinicians, missed appointments, and
+new appointment/test requests. It may create a pending escalation in the demo
+record, but it never completes the proposed resolution without a separate
+patient confirmation routed through ``orchestrator.resolve``.
+"""
 
 from __future__ import annotations
 
@@ -42,10 +49,19 @@ ESCALATION_TERMS = EMERGENCY_TERMS + (
 
 
 def _matches(query: str) -> bool:
+    """Claim escalation phrases before lower-priority specialists can match."""
+
     return any(term in query for term in ESCALATION_TERMS)
 
 
 def _details(text: str, patient_id: str) -> tuple[str, str, str, list[str], str]:
+    """Return safe copy and permitted confirmation options for one category.
+
+    Emergency text directs the patient to real emergency channels immediately;
+    recording a preferred follow-up action is additional and never presented as
+    a substitute for urgent care.
+    """
+
     if any(term in text for term in EMERGENCY_TERMS):
         return (
             "emergency",
@@ -141,6 +157,13 @@ def _details(text: str, patient_id: str) -> tuple[str, str, str, list[str], str]
 def _handle(
     state: OrchestratorState, runtime: Runtime[OrchestratorContext]
 ) -> dict:
+    """Create a pending escalation and return its confirmation choices.
+
+    ``create_escalation`` is the side-effect boundary: it mutates the current
+    Streamlit-backed demo record. The generated ID lets a later button click
+    resolve this exact escalation rather than infer intent from another message.
+    """
+
     text = state.get("query", "").lower().strip()
     category, reason, message, options, prompt = _details(
         text, runtime.context.patient_id
@@ -163,6 +186,8 @@ def _handle(
 
 
 def build() -> AgentSpec:
+    """Expose this highest-priority specialist to the supervisor."""
+
     return AgentSpec(
         name="escalation_agent",
         description=(

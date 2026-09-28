@@ -1,3 +1,13 @@
+"""Streamlit presentation layer for the VESPH Care capstone.
+
+Chat call flow:
+    Streamlit UI -> chat_service -> LangGraph orchestrator -> specialist agent
+    -> tools/demo data -> chat_service -> Streamlit session state -> rendered UI
+
+This module owns widgets and browser-session state. It does not decide which
+specialist should answer; ``chat_service`` and the orchestrator own that work.
+"""
+
 from __future__ import annotations
 
 from html import escape
@@ -257,7 +267,12 @@ DATA = st.session_state.care_data
 
 @st.cache_resource
 def get_orchestrator():
-    """Build the graph once so thread checkpoints survive Streamlit reruns."""
+    """Build the graph once so thread checkpoints survive Streamlit reruns.
+
+    Streamlit reruns this file after most interactions. Without resource
+    caching, each rerun would create a new in-memory checkpointer and the graph
+    would lose the thread history associated with this patient.
+    """
 
     return build_orchestrator()
 
@@ -267,7 +282,12 @@ ORCHESTRATOR = get_orchestrator()
 
 @st.cache_resource
 def get_integrations() -> IntegrationHub:
-    """Create server-only clients from Streamlit secrets or local env vars."""
+    """Create server-only clients once from Streamlit secrets or local env vars.
+
+    The returned hub lazily creates Groq and Supabase clients. Caching it avoids
+    rebuilding those clients on every widget interaction; it does not expose
+    their credentials to the browser or place secrets in chat state.
+    """
 
     return IntegrationHub(IntegrationSettings.from_sources(st.secrets))
 
@@ -306,6 +326,17 @@ def clipped(text: str, max_chars: int = 180) -> str:
 
 
 def add_chat_message(prompt: str) -> None:
+    """Send one UI message through the chat pipeline and store both turns.
+
+    Side effects: appends the patient's message and the assistant reply to
+    ``st.session_state.messages``. ``answer_chat`` may also create a pending
+    escalation in the mutable demo record. Rendering and rerunning remain the
+    caller's responsibility so buttons and typed input can share this function.
+    """
+
+    # Keep the user's turn in browser-session history before routing it. The
+    # history sent to Groq below deliberately excludes this just-added message,
+    # because ``prompt`` is supplied separately as the current question.
     st.session_state.messages.append({"role": "user", "content": prompt})
     patient_id = DATA["patient"]["id"]
     reply = answer_chat(
@@ -329,7 +360,13 @@ def add_chat_message(prompt: str) -> None:
 
 
 def confirm_escalation_resolution(message_index: int, resolution: str) -> None:
-    """Record a patient's resolution choice and close the pending chat prompt."""
+    """Record a patient's resolution choice and close the pending chat prompt.
+
+    This is a different graph action from normal chat. It calls ``resolve``
+    with an existing escalation ID, updates the earlier message so its buttons
+    stop representing a pending choice, and appends the confirmation response.
+    The button handler that calls this function performs the Streamlit rerun.
+    """
 
     source_message = st.session_state.messages[message_index]
     escalation = source_message.get("escalation")
@@ -907,6 +944,10 @@ with right:
         if add_clicked:
             add_item_dialog("Diagnostic report")
         if submitted and prompt.strip():
+            # A form submit handles both the send icon and Enter. The explicit
+            # rerun redraws the chat after ``add_chat_message`` changes session
+            # state; it must remain inside this submit branch so Enter cannot
+            # trigger the neighbouring upload control.
             add_chat_message(prompt.strip())
             st.rerun()
 

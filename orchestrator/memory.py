@@ -1,8 +1,11 @@
 """Short- and long-term memory backends for the local capstone demo.
 
-The in-memory implementations keep the project runnable without infrastructure.
-Production can replace these two objects with PostgresSaver and PostgresStore
-using the Supabase Postgres connection string.
+The checkpointer retains graph/thread state, including accumulated messages.
+The store holds patient-scoped facts such as confirmed escalation resolutions.
+Both implementations are process-local: restarting or redeploying Streamlit
+clears them. Production can replace these objects with PostgresSaver and
+PostgresStore using the Supabase Postgres connection string without changing
+the specialist-agent contract.
 """
 
 from __future__ import annotations
@@ -15,12 +18,18 @@ from langgraph.store.memory import InMemoryStore
 
 @dataclass(frozen=True)
 class MemoryBackends:
+    """Keep thread checkpoints and cross-thread facts as separate concerns."""
+
     checkpointer: InMemorySaver
     store: InMemoryStore
 
 
 def build_memory() -> MemoryBackends:
-    """Create thread-scoped chat state and a separate durable-fact store."""
+    """Create process-local thread state and a separate patient-fact store.
+
+    "Durable" here means separate from a single graph invocation, not durable
+    across a Streamlit process restart; persistence requires Postgres backends.
+    """
 
     return MemoryBackends(
         checkpointer=InMemorySaver(),

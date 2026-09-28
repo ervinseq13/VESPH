@@ -2,6 +2,10 @@
 
 Secrets are read by ``app.py`` and passed into this module. They are never
 included in prompts, status messages, logs, or exceptions returned to users.
+
+Groq is an answer-generation fallback outside the LangGraph specialist graph.
+Supabase is currently connectivity-tested only; the synthetic JSON/session
+record remains the clinical source until tables and row-level security exist.
 """
 
 from __future__ import annotations
@@ -23,6 +27,8 @@ DEFAULT_GROQ_MODEL = "openai/gpt-oss-20b"
 
 @dataclass(frozen=True)
 class IntegrationSettings:
+    """Secret-backed server configuration with no network side effects."""
+
     groq_api_key: str = ""
     groq_model: str = DEFAULT_GROQ_MODEL
     supabase_url: str = ""
@@ -64,13 +70,19 @@ class IntegrationSettings:
 
 @dataclass(frozen=True)
 class ServiceStatus:
+    """Secret-safe connection result that can be displayed in patient chat."""
+
     configured: bool
     connected: bool
     detail: str
 
 
 class IntegrationHub:
-    """Lazy, server-side access to Groq and the future Supabase data layer."""
+    """Lazy, server-side access to Groq and the future Supabase data layer.
+
+    Constructing the hub does not contact either service. Network access starts
+    only when an answer or explicit connection check requests a client method.
+    """
 
     def __init__(self, settings: IntegrationSettings):
         self.settings = settings
@@ -93,7 +105,11 @@ class IntegrationHub:
         return self._groq
 
     def supabase_client(self) -> Client:
-        """Return the prepared client without assuming any table exists."""
+        """Return the prepared client without assuming or querying any table.
+
+        This is the future clinical-data seam. Current agent handlers still
+        receive the synthetic record through ``OrchestratorContext``.
+        """
 
         if not self.supabase_configured:
             raise RuntimeError("Supabase is not configured")
@@ -112,8 +128,11 @@ class IntegrationHub:
     ) -> str | None:
         """Answer an open-ended question from the supplied synthetic record.
 
-        A failure returns ``None`` so the UI can fall back to the deterministic
-        LangGraph response instead of breaking the patient conversation.
+        This method makes an external Groq API request using a bounded synthetic
+        record snapshot and recent chat context. It does not write patient data,
+        update bookings, or persist the generated answer. A failure returns
+        ``None`` so the UI can fall back to the deterministic LangGraph response
+        instead of breaking the patient conversation.
         """
 
         if not self.groq_configured:
@@ -171,6 +190,8 @@ class IntegrationHub:
             return None
 
     def check_groq(self) -> ServiceStatus:
+        """Make a live model-list request without sending patient information."""
+
         if not self.groq_configured:
             return ServiceStatus(False, False, "LLM_API_KEY is not configured.")
         try:
@@ -191,7 +212,12 @@ class IntegrationHub:
             return ServiceStatus(True, False, self._safe_failure("Groq", error))
 
     def check_supabase(self) -> ServiceStatus:
-        """Validate project/key access without querying a not-yet-created table."""
+        """Validate project/key access without querying a clinical table.
+
+        The request targets Supabase Auth settings only. A successful result
+        proves project/key reachability, not that future schemas or RLS policies
+        are ready for patient data.
+        """
 
         if not self.supabase_configured:
             return ServiceStatus(
@@ -222,6 +248,8 @@ class IntegrationHub:
             return ServiceStatus(True, False, self._safe_failure("Supabase", error))
 
     def status_message(self) -> str:
+        """Run both live checks and format secret-safe results for chat."""
+
         groq = self.check_groq()
         supabase = self.check_supabase()
 

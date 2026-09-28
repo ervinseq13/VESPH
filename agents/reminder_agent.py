@@ -1,4 +1,10 @@
-"""Reminder Agent for appointment and medication follow-up conversations."""
+"""Reminder Agent for read-only appointment and dose-timing questions.
+
+This specialist owns appointment, confirmation/reschedule, doctor, reminder,
+and next-dose intents. It reports schedule data from the current run context;
+it does not itself change a booking or medication. Actual UI actions remain
+explicit buttons/dialogs so a chat response cannot silently alter care records.
+"""
 
 from __future__ import annotations
 
@@ -21,12 +27,16 @@ REMINDER_TERMS = (
 
 
 def _matches(query: str) -> bool:
+    """Claim reminder-related phrases; escalation wins overlapping phrases."""
+
     return any(term in query for term in REMINDER_TERMS)
 
 
 def _handle(
     state: OrchestratorState, runtime: Runtime[OrchestratorContext]
 ) -> dict:
+    """Read the next relevant schedule item and return a grounded response."""
+
     text = state.get("query", "").lower().strip()
     data = runtime.context.care_data
 
@@ -58,6 +68,8 @@ def _handle(
 
 
 def build() -> AgentSpec:
+    """Expose this specialist through the common orchestrator contract."""
+
     return AgentSpec(
         name="reminder_agent",
         description="Handles reminders, confirmations, reschedules, and dose timing.",
