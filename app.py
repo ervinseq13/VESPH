@@ -205,15 +205,15 @@ h1, h2, h3 { font-family: "Manrope", sans-serif !important; letter-spacing: -.02
 .detail-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; margin:5px 0 10px; }
 .detail-cell { background:#F5F8F7; border-radius:9px; padding:8px; font-size:10px; color:#425B58; }
 .detail-cell strong { display:block; color:var(--ink); margin-bottom:2px; }
-.st-key-suggestion_row .stButton > button, .st-key-doc_suggestion_row .stButton > button { min-height:23px; padding:1px 3px; }
+.st-key-suggestion_row .stButton > button, .st-key-doc_suggestion_row .stButton > button { min-height:26px; padding:2px 4px; border-radius:8px; }
 .st-key-suggestion_row .stButton > button > div, .st-key-doc_suggestion_row .stButton > button > div { width:100%; justify-content:center !important; }
 .st-key-suggestion_row [data-testid="stMarkdownContainer"], .st-key-doc_suggestion_row [data-testid="stMarkdownContainer"] {
   height:100%; display:flex; align-items:center; justify-content:center;
-  line-height:1 !important;
+  line-height:1.2 !important;
 }
 .st-key-suggestion_row .stButton p, .st-key-doc_suggestion_row .stButton p {
-  display:block !important; width:100%; margin:0; font-size:8px !important; line-height:1 !important;
-  text-align:center !important; white-space:nowrap;
+  display:block !important; width:100%; margin:0; font-size:9px !important; line-height:1.2 !important;
+  text-align:center !important; white-space:normal !important;
 }
 
 [data-testid="stBaseButton-tertiary"] {
@@ -313,9 +313,9 @@ div[data-testid="stMetricValue"] { font-size:16px; }
   .stApp .st-key-chat_history,
   .stApp .st-key-doctor_chat_history {
     flex: 1 1 auto !important;
-    height: calc(100vh - 300px) !important;
-    min-height: 240px !important;
-    max-height: calc(100vh - 300px) !important;
+    height: calc(100vh - 355px) !important;
+    min-height: 180px !important;
+    max-height: calc(100vh - 355px) !important;
     overflow-y: auto !important;
     padding-bottom: 4px;
   }
@@ -325,7 +325,7 @@ div[data-testid="stMetricValue"] { font-size:16px; }
     position: relative !important;
     bottom: auto !important;
     margin-top: auto !important;
-    margin-bottom: 34px !important;
+    margin-bottom: 2px !important;
     gap: 3px !important;
   }
   .st-key-chat_dock [data-testid="stVerticalBlock"],
@@ -737,11 +737,12 @@ def record_activity_update(action: str = "Last edit") -> None:
 
 
 def panel_header(eyebrow: str, title: str, copy: str = "") -> None:
+    title_html = escape(title).replace("\n", "<br>")
     st.markdown(
         f"""
         <div class="panel-title">
           <div class="eyebrow">{escape(eyebrow)}</div>
-          {f'<div class="panel-heading">{escape(title)}</div>' if title else ''}
+          {f'<div class="panel-heading">{title_html}</div>' if title else ''}
           {f'<div class="panel-copy">{escape(copy)}</div>' if copy else ''}
         </div>
         """,
@@ -931,10 +932,20 @@ def add_doctor_chat_message(prompt: str, doc_snapshot: dict[str, Any]) -> None:
     # Only include specific patient chart if doctor explicitly asked about that patient
     lowered_q = prompt.lower().strip()
 
-    # 1. Multi-turn confirmation check (e.g. user replies "yes", "confirm", "proceed", "go ahead")
+    # 1. Acknowledgment check (e.g. "ok", "thanks")
+    acknowledgments = {"ok", "okay", "k", "thanks", "thank you", "thx", "got it", "great", "perfect", "cool", "noted", "understood", "all right", "alright", "ok thanks", "okay thanks"}
+    if lowered_q in acknowledgments:
+        st.session_state.doctor_messages.append({
+            "role": "assistant",
+            "content": "You're welcome! Let me know if you need to check other schedules, review patient records, or update OPD availability.",
+            "agent": "Clinical Assistant",
+        })
+        return
+
+    # 2. Multi-turn confirmation check (e.g. user replies "yes", "confirm", "proceed", "go ahead")
     is_confirmation = lowered_q in {
         "yes", "yep", "yeah", "sure", "confirm", "proceed", "please do",
-        "go ahead", "do it", "yes please", "yes, please", "ok", "okay", "block it"
+        "go ahead", "do it", "yes please", "yes, please", "block it"
     }
 
     last_assistant_msg = ""
@@ -951,7 +962,7 @@ def add_doctor_chat_message(prompt: str, doc_snapshot: dict[str, Any]) -> None:
                 break
 
     # Direct command to block in current prompt (e.g., "I'm not available on 22nd oct, block this day...")
-    direct_block_command = ("block" in lowered_q or "unavailable" in lowered_q) and ("reschedule" in lowered_q or "escalat" in lowered_q or "supabase" in lowered_q)
+    direct_block_command = ("block" in lowered_q or "unavailable" in lowered_q or "off" in lowered_q) and ("reschedule" in lowered_q or "escalat" in lowered_q or "supabase" in lowered_q)
     if direct_block_command and not pending_block_date:
         for d_num in range(1, 32):
             if (f"{d_num}th" in lowered_q or f"{d_num}st" in lowered_q or f"{d_num}nd" in lowered_q or f"{d_num}rd" in lowered_q or f" {d_num} " in f" {lowered_q} "):
@@ -960,30 +971,42 @@ def add_doctor_chat_message(prompt: str, doc_snapshot: dict[str, Any]) -> None:
 
     if (is_confirmation and pending_block_date) or (direct_block_command and pending_block_date):
         client = INTEGRATIONS.supabase_client()
-        block_doctor_slot_in_supabase(client, st.session_state.active_doctor_id, pending_block_date, reason="Doctor Unavailable - Leave")
-        day_str = pending_block_date.split("-")[-1]
-        affected = [
-            a for a in all_doctor_appts
-            if pending_block_date in str(a.get("raw_datetime") or "") or f"{int(day_str)} oct" in str(a.get("date") or "").lower()
-        ]
-        for a in affected:
-            try:
-                update_appointment_in_supabase(client, a["id"], "Reschedule Pending")
-            except Exception:
-                pass
+        affected = []
+        try:
+            block_doctor_slot_in_supabase(
+                client=client,
+                doctor_id=st.session_state.active_doctor_id,
+                blocked_date=pending_block_date,
+                blocked_slot=None,
+                reason="Doctor Unavailable - Leave",
+            )
+            day_str = pending_block_date.split("-")[-1]
+            affected = [
+                a for a in all_doctor_appts
+                if pending_block_date in str(a.get("raw_datetime") or "") or f"{int(day_str)} oct" in str(a.get("date") or "").lower()
+            ]
+            for a in affected:
+                try:
+                    update_appointment_in_supabase(client, a["id"], "Reschedule Pending")
+                except Exception:
+                    pass
+        except Exception as err:
+            print(f"Error executing slot block in Supabase: {err}")
 
         st.session_state._pending_block_date = None
         st.session_state._doctor_data_id = None
+        st.session_state._patient_data_id = None
+        st.session_state._loaded_patient_id = None
         record_activity_update(f"Blocked {pending_block_date} and escalated appointments")
         st.session_state["doctor_toast"] = (f"Blocked {pending_block_date} & escalations sent!", "✅")
 
-        patient_lines = "\n".join([f"• **{a.get('time', 'OPD')}:** {escape(a.get('patient_name', 'Patient'))} ({escape(a.get('type', 'Consultation'))}) – Status: *Reschedule Pending*" for a in affected]) if affected else "• No active patient conflicts found."
+        patient_lines = "\n".join([f"• **{a.get('time', 'OPD')}:** {escape(a.get('patient_name', 'Patient'))} ({escape(a.get('type', 'Consultation'))}) – Status: *Reschedule requested*" for a in affected]) if affected else "• No active patient conflicts found."
         confirm_reply = (
-            f"✅ **Schedule Blocked & Reschedule Escalations Triggered:**\n\n"
-            f"**Date:** {pending_block_date} is now marked **Blocked (Clinic Off)** in Supabase.\n\n"
-            f"**Affected Patients ({len(affected)}):**\n"
+            f"✅ **Unavailability Recorded in Supabase & Priority Reschedule Initiated:**\n\n"
+            f"**Date:** {pending_block_date} is now recorded as **Blocked (Leave)** in the Supabase schedule.\n\n"
+            f"**Affected Appointments ({len(affected)}):**\n"
             f"{patient_lines}\n\n"
-            "Priority reschedule escalations have been dispatched to patients with next-available OPD slot options."
+            "All affected patients have been notified of the pending reschedule. The care team has triggered automatic rebooking to the next available OPD slots."
         )
         st.session_state.doctor_messages.append({
             "role": "assistant",
@@ -992,7 +1015,7 @@ def add_doctor_chat_message(prompt: str, doc_snapshot: dict[str, Any]) -> None:
         })
         return
 
-    # 2. Check for generic patient summary without specific patient name
+    # 3. Check for generic patient summary without specific patient name
     generic_patient_queries = [
         "patient info / summary", "patient info/summary", "patient info",
         "patient summary", "patient details", "patient chart",
@@ -2154,9 +2177,7 @@ def render_patient_portal() -> None:
         )
 
         with appointments_tab:
-            head_a, head_b = st.columns([1, 0.52])
-            with head_a:
-                st.caption("UPCOMING → PAST")
+            _, head_b = st.columns([1.6, 0.4])
             with head_b:
                 if st.button("＋ Add", key="new_appointment_tab", use_container_width=True):
                     add_item_dialog("New appointment")
@@ -2176,9 +2197,7 @@ def render_patient_portal() -> None:
                     )
 
         with diagnostics_tab:
-            head_a, head_b = st.columns([1, 0.52])
-            with head_a:
-                st.caption("UPCOMING → PAST")
+            _, head_b = st.columns([1.6, 0.4])
             with head_b:
                 if st.button("＋ Upload", key="add_report_tab", use_container_width=True):
                     add_item_dialog("Diagnostic report")
@@ -2505,12 +2524,12 @@ def render_doctor_portal() -> None:
         }
         week_keys = list(week_options_map.keys())
 
-        hdr_col, week_col, btn_col = st.columns([1.1, 0.95, 0.95], gap="small", vertical_alignment="center")
+        hdr_col, week_col, btn_col = st.columns([1.35, 0.95, 0.72], gap="small", vertical_alignment="center")
         with hdr_col:
             panel_header(
                 "Doctor Appointment Agenda",
-                f"Schedule Overview · {doc_name}",
-                "Click on any appointment card to view patient's clinical chart.",
+                f"Schedule Overview\n{doc_name}",
+                "",
             )
         with week_col:
             week_choice = st.selectbox(

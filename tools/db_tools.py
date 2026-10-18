@@ -866,8 +866,8 @@ def block_doctor_slot_in_supabase(
     client: Client,
     doctor_id: str,
     blocked_date: str,
-    blocked_slot: str | None,
-    reason: str,
+    blocked_slot: str | None = None,
+    reason: str = "Doctor unavailable",
 ) -> list[dict[str, Any]]:
     """Mark doctor unavailable, identify conflicting patient appointments, and auto-rebook them."""
     is_full_day = not blocked_slot or blocked_slot.lower().strip() in ("all day", "full day")
