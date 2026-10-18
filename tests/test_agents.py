@@ -71,8 +71,27 @@ class TestAgentWorkflows(unittest.TestCase):
                 "discharge_date": "10 Oct 2026",
                 "instructions": ["Keep incision sites clean and dry."],
             },
+            "consultations": [
+                {
+                    "date": "16 Oct 2026",
+                    "doctor": "Dr. Rhea Mehta",
+                    "diagnosis": "Post-laparoscopic appendectomy recovery - uneventful course.",
+                    "symptoms": "Mild post-op twinge at trocar site, dry cough occasionally.",
+                    "treatment_plan": "Keep wound dry, light ambulation, maintain hydration.",
+                    "vitals": {"bp_systolic": 118, "bp_diastolic": 76},
+                }
+            ],
             "escalations": [],
         }
+
+    def test_summary_agent_last_appointment(self):
+        query = "What happened in my last appointment"
+        res = run(self.orchestrator, query, self.sample_care_data, "22222222-2222-2222-2222-222222222222")
+        self.assertIn("Summary Agent", res.agent)
+        self.assertIn("Consultation Summary", res.agent)
+        self.assertNotIn("Reminder Agent", res.agent)
+        self.assertIn("Clinical Assessment", res.message)
+        self.assertIn("Dr. Rhea Mehta", res.message)
 
     def test_reminder_agent_diagnostic_pre_visit(self):
         query = "My doctor told me to get a blood test before the next visit"

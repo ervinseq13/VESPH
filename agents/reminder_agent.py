@@ -8,9 +8,22 @@ from agents.models import AgentSpec
 from orchestrator.state import OrchestratorContext, OrchestratorState
 
 
+PAST_QUERY_MARKERS = (
+    "last appointment", "past appointment", "previous appointment",
+    "last visit", "previous visit", "past visit",
+    "what happened", "what did the doctor say", "what was decided",
+    "last consultation", "previous consultation", "past consultation",
+    "earlier appointment", "notes from", "summary of my", "what took place",
+    "what was discussed", "happened in", "happened at",
+)
+
 REMINDER_TERMS = (
-    # Appointments — natural ways patients ask
-    "appointment", "when do i go", "when do i have to go", "have to go",
+    # Appointments — natural ways patients ask about upcoming/pending visits
+    "next appointment", "upcoming appointment", "my appointment",
+    "when is my appointment", "appointment time", "appointment date",
+    "appointment schedule", "reschedule appointment", "confirm appointment",
+    "book appointment", "appointment reminder", "appointment",
+    "when do i go", "when do i have to go", "have to go",
     "when is my visit", "next visit", "hospital visit", "hospital",
     "do i have to come in", "am i supposed to go", "what time is my",
     "when do i see the doctor", "when do i see dr", "coming saturday",
@@ -30,7 +43,10 @@ REMINDER_TERMS = (
 
 
 def _matches(query: str) -> bool:
-    return any(term in query for term in REMINDER_TERMS)
+    lowered = query.lower().strip()
+    if any(marker in lowered for marker in PAST_QUERY_MARKERS):
+        return False
+    return any(term in lowered for term in REMINDER_TERMS)
 
 
 def _handle(

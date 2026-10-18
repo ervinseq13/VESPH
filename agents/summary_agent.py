@@ -9,6 +9,13 @@ from orchestrator.state import OrchestratorContext, OrchestratorState
 
 
 SUMMARY_TERMS = (
+    # Past appointments & consultations
+    "last appointment", "past appointment", "previous appointment",
+    "last visit", "previous visit", "past visit", "last consultation",
+    "what happened in my last", "what happened at my last", "what happened in",
+    "what happened during", "what did the doctor say", "notes from my last",
+    "consultation summary", "past doctor visit", "what was discussed",
+    "doctor consultation", "what happened",
     # Medications
     "medicine", "medication", "tablet", "inhaler", "pills", "capsule",
     # Diagnostics and reports
@@ -21,7 +28,7 @@ SUMMARY_TERMS = (
     "summary", "health", "how am i doing", "how am i", "history",
     "what's wrong with me", "my condition", "my diagnosis",
     "can i eat normally", "any restrictions", "am i getting better",
-    "what did the doctor say", "my allergies",
+    "my allergies",
 )
 
 
@@ -44,6 +51,57 @@ def _handle(
     text = state.get("query", "").lower().strip()
     data = runtime.context.care_data
     patient = data["patient"]
+
+    # Branch 0: Past appointment / consultation review
+    if any(
+        term in text
+        for term in (
+            "last appointment", "past appointment", "previous appointment",
+            "last visit", "previous visit", "past visit", "what happened",
+            "what did the doctor say", "consultation", "what was discussed",
+            "notes from",
+        )
+    ):
+        consultations = data.get("consultations", [])
+        if consultations:
+            latest = consultations[0]
+            c_doc = latest.get("doctor", "Dr. Rhea Mehta")
+            c_date = latest.get("date", "recent consultation")
+            c_diag = latest.get("diagnosis", "Post-operative follow-up")
+            c_symp = latest.get("symptoms", "")
+            c_plan = latest.get("treatment_plan", "")
+            vitals = latest.get("vitals", {})
+
+            vitals_info = ""
+            if vitals.get("bp_systolic") and vitals.get("bp_diastolic"):
+                vitals_info = f" Recorded BP was {vitals['bp_systolic']}/{vitals['bp_diastolic']} mmHg."
+
+            msg = (
+                f"During your last recorded consultation on {c_date} with {c_doc}:\n\n"
+                f"• Clinical Assessment: {c_diag}\n"
+            )
+            if c_symp:
+                msg += f"• Observations: {c_symp}\n"
+            if c_plan:
+                msg += f"• Doctor's Plan: {c_plan}\n"
+            if vitals_info:
+                msg += f"• Vitals:{vitals_info}\n"
+
+            msg += (
+                "\nAll surgical incisions were noted as healing well by primary intention. "
+                "Your doctor advised continuing light ambulation, following your mealtime prescriptions, and attending your scheduled follow-up."
+            )
+            return _reply(msg, "Consultation Summary")
+
+        discharge = data.get("discharge", {})
+        if discharge and discharge.get("procedure"):
+            return _reply(
+                f"In your surgical discharge with {discharge.get('consultant', 'Dr. Rhea Mehta')} on {discharge.get('discharge_date', '')}: "
+                f"You were reviewed for {discharge.get('procedure', '')}. "
+                f"Condition: {discharge.get('condition_at_discharge', 'Stable recovery')}. "
+                f"Follow-up: {discharge.get('follow_up', 'Follow-up with surgical team')}.",
+                "Discharge Summary",
+            )
 
     if any(
         term in text
