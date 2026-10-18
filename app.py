@@ -448,17 +448,26 @@ div[data-testid="stTextInput"] div:has(> [data-testid="InputInstructions"]) {
 [class*="st-key-agenda_box_"] {
   position: relative !important;
   margin-top: 0 !important;
-  margin-bottom: 3px !important;
+  margin-bottom: 6px !important;
 }
 [class*="st-key-agenda_box_"] button {
-  position: absolute !important;
-  top: 0 !important;
-  left: 0 !important;
-  width: 100% !important;
-  height: 100% !important;
-  opacity: 0 !important;
-  z-index: 10 !important;
+  background: #F0F7F6 !important;
+  border: 1px solid rgba(11, 110, 105, 0.28) !important;
+  color: #0B6E69 !important;
+  font-weight: 600 !important;
+  font-size: 11px !important;
+  border-radius: 8px !important;
+  padding: 4px 12px !important;
+  margin-top: 5px !important;
+  margin-bottom: 2px !important;
+  transition: all 0.18s ease-in-out !important;
   cursor: pointer !important;
+}
+[class*="st-key-agenda_box_"] button:hover {
+  background: #0B6E69 !important;
+  color: #FFFFFF !important;
+  border-color: #0B6E69 !important;
+  box-shadow: 0 2px 8px rgba(11, 110, 105, 0.25) !important;
 }
 [class*="st-key-agenda_box_"]:hover .agenda-card {
   border-color: #0B6E69 !important;
@@ -831,6 +840,71 @@ def add_chat_message(prompt: str) -> None:
                         "Your medication card and notification centre have been updated."
                     ),
                     "agent": "Medication Agent · Supabase Sync",
+                    "escalated": False,
+                    "escalation": None,
+                }
+            )
+            return
+
+    # Appointment confirmation detection from patient chat (e.g. "confirm appointment", "confirm slot", "yes confirm")
+    is_appt_confirm = (
+        any(phrase in lowered for phrase in [
+            "confirm appointment", "confirm my appointment", "confirm slot", "confirm my slot",
+            "confirm the appointment", "confirm booking", "confirm my booking", "confirm visit",
+            "confirm attendance", "accept slot", "confirm reschedule", "confirm the reschedule",
+            "yes confirm", "please confirm", "confirm date", "confirm my visit"
+        ]) or (
+            "confirm" in lowered and any(k in lowered for k in ["appointment", "slot", "schedule", "reschedule", "booking", "visit", "attendance"])
+        )
+    ) and not any(neg in lowered for neg in ["don't", "do not", "cancel", "cannot", "can't"])
+
+    if is_appt_confirm:
+        upcoming_appts = [
+            a for a in DATA.get("appointments", [])
+            if not is_appointment_past(a) and a.get("status") != "Cancelled"
+        ]
+        target_a = None
+        pending_appts = [a for a in upcoming_appts if a.get("status") == "Pending"]
+        if pending_appts:
+            target_a = pending_appts[0]
+        elif upcoming_appts:
+            target_a = upcoming_appts[0]
+
+        if target_a:
+            target_a["status"] = "Confirmed"
+            client = INTEGRATIONS.supabase_client()
+            try:
+                update_appointment_in_supabase(client, target_a["id"], "Confirmed")
+            except Exception:
+                pass
+
+            try:
+                client.table("escalation_agent_data").update({
+                    "status": "Resolved",
+                    "resolved_at": datetime.now().isoformat(),
+                    "notes": "Patient confirmed appointment slot via conversational care agent."
+                }).eq("patient_id", patient_id).eq("status", "Open").execute()
+            except Exception:
+                pass
+
+            record_activity_update("Confirmed appointment via care assistant")
+            st.session_state._patient_data_id = None
+
+            appt_title = target_a.get("type", "Appointment")
+            appt_doc = target_a.get("doctor", "Dr. Rhea Mehta")
+            appt_date = target_a.get("date", "22 Oct 2026")
+            appt_time = target_a.get("time", "11:00 AM")
+            appt_loc = target_a.get("location", "OPD Wing B, Room 304")
+
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": (
+                        f"✅ Confirmed! Your **{appt_title}** with **{appt_doc}** on **{appt_date} at {appt_time}** ({appt_loc}) "
+                        f"has been officially confirmed in your hospital record. "
+                        f"Your Notification Centre and upcoming schedule are now marked as Confirmed."
+                    ),
+                    "agent": "Appointment Agent · Supabase Sync",
                     "escalated": False,
                     "escalation": None,
                 }
@@ -1976,18 +2050,43 @@ def render_patient_portal() -> None:
             # 2. Next Upcoming Appointment (FOLLOWED BY NEXT UPCOMING APPOINTMENT)
             if target_appt:
                 is_confirmed = target_appt.get("status") == "Confirmed"
+                is_rescheduled = bool(
+                    target_appt.get("rebook_notice")
+                    or "[Notice]" in (target_appt.get("summary") or "")
+                    or "reschedule" in (target_appt.get("summary") or "").lower()
+                    or "reschedule" in (target_appt.get("status") or "").lower()
+                )
                 with reminder_strip.container(border=True, width=340):
-                    kicker = "Upcoming Appointment · Confirmed" if is_confirmed else "Appointment · Action Needed"
-                    meta_text = "Confirmed attendance · Bring reports & ID" if is_confirmed else "Attendance pending confirmation · Bring reports"
+                    if is_confirmed:
+                        kicker = "Upcoming Appointment · Confirmed"
+                        meta_text = "Confirmed attendance · Bring reports & ID"
+                        badge_time = "In 4 days"
+                        card_class = "reminder-card primary"
+                    elif is_rescheduled:
+                        kicker = "⚠️ Rescheduled Appointment · Pending Confirmation"
+                        meta_text = "Doctor adjusted schedule · Please confirm your new slot"
+                        badge_time = "Action Needed"
+                        card_class = "reminder-card secondary"
+                    else:
+                        kicker = "Appointment · Action Needed"
+                        meta_text = "Attendance pending confirmation · Bring reports"
+                        badge_time = "In 4 days"
+                        card_class = "reminder-card primary"
+
+                    notice_line = ""
+                    if is_rescheduled and target_appt.get("rebook_notice"):
+                        notice_line = f'<div style="margin-top:4px; font-size:10px; color:#C53030; font-weight:600;">{escape(target_appt.get("rebook_notice"))}</div>'
+
                     st.markdown(
                         f"""
-                        <div class="reminder-card primary">
+                        <div class="{card_class}">
                           <div class="reminder-top">
                             <div class="reminder-kicker">{kicker}</div>
-                            <div class="reminder-time">In 4 days</div>
+                            <div class="reminder-time">{badge_time}</div>
                           </div>
                           <div class="reminder-title">{escape(target_appt['type'])}</div>
                           <div class="reminder-detail">{escape(target_appt['doctor'])} · {escape(target_appt['date'])}<br>{escape(target_appt['time'])} · {escape(target_appt['location'])}</div>
+                          {notice_line}
                           <div class="reminder-meta">{meta_text}</div>
                         </div>
                         """,
@@ -1996,17 +2095,28 @@ def render_patient_portal() -> None:
                     action_a, action_b = st.columns(2, gap="small")
                     with action_a:
                         if not is_confirmed:
-                            if st.button("✓ Confirm", type="primary", key="confirm_reminder", use_container_width=True):
+                            btn_label = "✓ Confirm Slot" if is_rescheduled else "✓ Confirm"
+                            if st.button(btn_label, type="primary", key="confirm_reminder", use_container_width=True):
                                 target_appt["status"] = "Confirmed"
+                                client = INTEGRATIONS.supabase_client()
                                 try:
                                     update_appointment_in_supabase(
-                                        INTEGRATIONS.supabase_client(),
+                                        client,
                                         target_appt["id"],
                                         "Confirmed",
                                     )
                                 except Exception:
                                     pass
+                                try:
+                                    client.table("escalation_agent_data").update({
+                                        "status": "Resolved",
+                                        "resolved_at": datetime.now().isoformat(),
+                                        "notes": "Patient confirmed appointment slot via Notification Centre."
+                                    }).eq("patient_id", patient_id).eq("status", "Open").execute()
+                                except Exception:
+                                    pass
                                 record_activity_update("Confirmed appointment attendance")
+                                st.session_state._patient_data_id = None
                                 st.session_state.messages.append(
                                     {
                                         "role": "assistant",
@@ -2517,7 +2627,7 @@ def render_doctor_portal() -> None:
                 with st.container(key=f"agenda_box_{idx}"):
                     st.markdown(
                         f"""
-                        <div class="agenda-card">
+                        <div class="agenda-card" style="cursor:pointer;" onclick="this.closest('[data-testid=\\'stVerticalBlock\\']').querySelector('button').click()" title="Click to view {escape(p_name)}'s clinical chart">
                           <div style="display:flex; justify-content:space-between; align-items:flex-start;">
                             <div style="display:flex; align-items:center; gap:8px;">
                               <span class="agenda-time">{escape(appt_time)}</span>
@@ -2540,7 +2650,8 @@ def render_doctor_portal() -> None:
                         """,
                         unsafe_allow_html=True,
                     )
-                    if st.button("Open Chart", key=f"card_{week_choice[:4]}_{abbr_sel}_{idx}_{a['id']}", use_container_width=True):
+                    btn_label = f"🩺 View Clinical Chart · {p_name} ({short_patient_id(p_id)})"
+                    if st.button(btn_label, key=f"card_{week_choice[:4]}_{abbr_sel}_{idx}_{a['id']}", use_container_width=True):
                         patient_clinical_chart_dialog(p_id, appointment_data=a)
 
     with doc_right:

@@ -107,10 +107,17 @@ def classify_doctor_intent(
     # 1. Confirmation check
     confirmations = {
         "yes", "yep", "yeah", "sure", "confirm", "proceed", "please do",
-        "go ahead", "do it", "yes please", "yes, please", "block it",
-        "save it", "save note", "yes save", "update db", "update database"
+        "go ahead", "do it", "do that", "yes please", "yes, please", "block it",
+        "save it", "save note", "yes save", "update db", "update database",
     }
-    if lowered in confirmations or (pending_action and ("confirm" in lowered or "yes" in lowered or "proceed" in lowered)):
+    if pending_action:
+        # When a proposal is pending doctor confirmation, accept conversational affirmations
+        words = set(re.findall(r"\b\w+\b", lowered))
+        affirmative_words = {"yes", "confirm", "proceed", "block", "ok", "okay", "sure", "ahead", "save", "approve", "fine", "alright"}
+        pending_confirmations = confirmations | {"ok", "okay", "k", "alright", "fine", "please", "approved", "approve"}
+        if lowered in pending_confirmations or bool(words & affirmative_words):
+            return "CONFIRM_ACTION"
+    elif lowered in confirmations:
         return "CONFIRM_ACTION"
 
     # 2. Clinical note ingestion check

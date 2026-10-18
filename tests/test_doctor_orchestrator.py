@@ -48,7 +48,7 @@ class TestDoctorOrchestrator(unittest.TestCase):
         self.assertEqual(classify_doctor_intent("who is Vikram Malhotra"), "PATIENT_QUERY")
         self.assertEqual(classify_doctor_intent("patient info / summary"), "PATIENT_QUERY")
 
-        # Chit-chat deflection
+        # Chit-chat deflection (without pending action)
         self.assertEqual(classify_doctor_intent("hello"), "CHIT_CHAT")
         self.assertEqual(classify_doctor_intent("ok"), "CHIT_CHAT")
         self.assertEqual(classify_doctor_intent("thanks"), "CHIT_CHAT")
@@ -58,19 +58,52 @@ class TestDoctorOrchestrator(unittest.TestCase):
         self.assertEqual(classify_doctor_intent("yes"), "CONFIRM_ACTION")
         self.assertEqual(classify_doctor_intent("confirm"), "CONFIRM_ACTION")
 
-    def test_seed_data_has_14_weekly_appointments(self):
-        """Verify the baseline for Dr. Rhea Mehta contains exactly 14 appointments (2 per day)."""
-        rhea_appts = [a for a in DR_RHEA_WEEKLY_APPTS if a.get("doctor_id") == DOC_RHEA_ID]
-        self.assertEqual(len(rhea_appts), 14)
+        # Confirmation with pending action (e.g. Doctor replying 'ok', 'okay', 'sure', 'proceed' to leave proposal)
+        dummy_pending = {"type": "block_unavailability", "date": "2026-10-22"}
+        self.assertEqual(classify_doctor_intent("ok", pending_action=dummy_pending), "CONFIRM_ACTION")
+        self.assertEqual(classify_doctor_intent("okay", pending_action=dummy_pending), "CONFIRM_ACTION")
+        self.assertEqual(classify_doctor_intent("sure", pending_action=dummy_pending), "CONFIRM_ACTION")
+        self.assertEqual(classify_doctor_intent("proceed", pending_action=dummy_pending), "CONFIRM_ACTION")
+        self.assertEqual(classify_doctor_intent("yes please", pending_action=dummy_pending), "CONFIRM_ACTION")
 
-        # Verify 2 appointments on each day from 18 to 24 Oct 2026
-        for day in range(18, 25):
-            date_str = f"2026-10-{day:02d}"
-            day_appts = [a for a in rhea_appts if date_str in a.get("appointment_datetime", "")]
-            self.assertEqual(len(day_appts), 2, f"Failed on date {date_str}: expected 2 appointments, got {len(day_appts)}")
+    def test_seed_data_has_22_weekly_and_16_next_week_appointments(self):
+        """Verify the baseline for Dr. Rhea Mehta contains exactly 22 appointments this week and 16 next week."""
+        from tools.seed_data import DR_RHEA_NEXT_WEEK_APPTS
+
+        rhea_weekly = [a for a in DR_RHEA_WEEKLY_APPTS if a.get("doctor_id") == DOC_RHEA_ID]
+        self.assertEqual(len(rhea_weekly), 22)
+
+        expected_weekly_counts = {
+            "2026-10-18": 3,
+            "2026-10-19": 4,
+            "2026-10-20": 3,
+            "2026-10-21": 4,
+            "2026-10-22": 3,
+            "2026-10-23": 3,
+            "2026-10-24": 2,
+        }
+        for date_str, exp_cnt in expected_weekly_counts.items():
+            cnt = len([a for a in rhea_weekly if date_str in a.get("appointment_datetime", "")])
+            self.assertEqual(cnt, exp_cnt, f"Failed on date {date_str}: expected {exp_cnt}, got {cnt}")
+
+        rhea_next_week = [a for a in DR_RHEA_NEXT_WEEK_APPTS if a.get("doctor_id") == DOC_RHEA_ID]
+        self.assertEqual(len(rhea_next_week), 16)
+
+        expected_next_week_counts = {
+            "2026-10-25": 2,
+            "2026-10-26": 3,
+            "2026-10-27": 3,
+            "2026-10-28": 3,
+            "2026-10-29": 2,
+            "2026-10-30": 2,
+            "2026-10-31": 1,
+        }
+        for date_str, exp_cnt in expected_next_week_counts.items():
+            cnt = len([a for a in rhea_next_week if date_str in a.get("appointment_datetime", "")])
+            self.assertEqual(cnt, exp_cnt, f"Failed on next week date {date_str}: expected {exp_cnt}, got {cnt}")
 
         # Verify Ananya Iyer's appointment on 22 Oct 2026 at 11:00 AM is Pending (not-confirmed)
-        ananya_appt = next(a for a in rhea_appts if a.get("appointment_id") == "33333333-3333-3333-3333-333333331001")
+        ananya_appt = next(a for a in rhea_weekly if a.get("appointment_id") == "33333333-3333-3333-3333-333333331001")
         self.assertEqual(ananya_appt["status"], "Pending")
 
     def test_orchestrator_schedule_query_execution(self):

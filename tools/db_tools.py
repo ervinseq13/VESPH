@@ -1036,15 +1036,39 @@ def block_doctor_slot_in_supabase(
     is_full_day = not blocked_slot or blocked_slot.lower().strip() in ("all day", "full day")
     block_type = "full_day" if is_full_day else "timeslot"
 
-    client.table("doctor_unavailability").insert(
-        {
-            "doctor_id": doctor_id,
-            "block_type": block_type,
-            "blocked_date": blocked_date,
-            "blocked_slot": blocked_slot if not is_full_day else None,
-            "reason": reason or "Doctor unavailable",
-        }
-    ).execute()
+    # Check if this date is already recorded in doctor_unavailability
+    try:
+        existing_block = (
+            client.table("doctor_unavailability")
+            .select("unavailability_id")
+            .eq("doctor_id", doctor_id)
+            .eq("blocked_date", blocked_date)
+            .execute()
+        )
+        if not existing_block.data:
+            client.table("doctor_unavailability").insert(
+                {
+                    "doctor_id": doctor_id,
+                    "block_type": block_type,
+                    "blocked_date": blocked_date,
+                    "blocked_slot": blocked_slot if not is_full_day else None,
+                    "reason": reason or "Doctor unavailable",
+                }
+            ).execute()
+    except Exception:
+        # Fallback direct insert if select fails
+        try:
+            client.table("doctor_unavailability").insert(
+                {
+                    "doctor_id": doctor_id,
+                    "block_type": block_type,
+                    "blocked_date": blocked_date,
+                    "blocked_slot": blocked_slot if not is_full_day else None,
+                    "reason": reason or "Doctor unavailable",
+                }
+            ).execute()
+        except Exception:
+            pass
 
     doc_resp = client.table("doctors").select("doctor_name").eq("doctor_id", doctor_id).execute()
     doc_name = doc_resp.data[0]["doctor_name"] if doc_resp.data else "Your doctor"
@@ -1112,6 +1136,21 @@ def block_doctor_slot_in_supabase(
                         "appointment_summary": updated_summary,
                     }
                 ).eq("appointment_id", a["appointment_id"]).execute()
+
+                # Insert priority rebooking ticket into escalation_agent_data
+                try:
+                    client.table("escalation_agent_data").insert(
+                        {
+                            "patient_id": a.get("patient_id"),
+                            "category": "Doctor Unavailable",
+                            "priority": "High",
+                            "status": "Open",
+                            "ai_detected_reason": f"{doc_name} is unavailable on {blocked_date} ({reason}). Reschedule proposed for {next_date} at {next_slot}. Awaiting patient confirmation.",
+                            "assigned_staff_role": "Duty Clinical Coordinator",
+                        }
+                    ).execute()
+                except Exception:
+                    pass
 
                 rebooked.append(
                     {
