@@ -120,23 +120,42 @@ def _handle(
             )
         route = "Medication Timing"
 
-    # Branch 3: Appointment attendance confirmation and scheduling
+    # Branch 3: Appointment attendance confirmation, 1-day advance notice, and reschedule resolution
     else:
         appts = data.get("appointments", [])
         upcoming = [a for a in appts if a.get("status") not in ("Completed", "Cancelled")]
         appointment = upcoming[0] if upcoming else (appts[0] if appts else {})
         if appointment:
-            message = (
-                f"Hospital Visit Confirmation: Your next visit is a {appointment.get('type', 'Consultation')} "
-                f"with {appointment.get('doctor', 'Dr. Rhea Mehta')} on {appointment.get('date', '22 Oct 2026')} "
-                f"at {appointment.get('time', '11:30 AM')} in {appointment.get('location', 'OPD Wing B, Room 304')}. "
-                f"Status: {appointment.get('status', 'Confirmed')}. "
-                f"Preparation: {appointment.get('preparation', 'Please bring previous reports')}. "
-                "If you need to change your date, tap Reschedule in your Appointments tab to view available open slots."
-            )
+            appt_status = appointment.get("status", "Confirmed")
+            appt_date = appointment.get("date", "22 Oct 2026")
+            appt_time = appointment.get("time", "11:00 AM")
+            appt_doc = appointment.get("doctor", "Dr. Rhea Mehta")
+            appt_loc = appointment.get("location", "OPD Wing B, Room 304")
+            appt_prep = appointment.get("preparation", "Bring previous surgical discharge summary and lab reports")
+            
+            # Check if appointment is pending re-confirmation due to doctor reschedule
+            if "Reschedule" in appt_status or "Pending" in appt_status:
+                message = (
+                    f"⚠️ **Action Required – Appointment Rescheduled:**\n\n"
+                    f"Dr. Rhea Mehta had a schedule adjustment, and your {appointment.get('type', 'Follow-up')} "
+                    f"is proposed for **{appt_date} at {appt_time}** in {appt_loc}.\n\n"
+                    f"• **Preparation:** {appt_prep}\n"
+                    f"• **Current Status:** *{appt_status} (Awaiting Your Confirmation)*\n\n"
+                    "Since this slot was updated, please **confirm** if this date works for you or tap **Reschedule** to pick another slot that matches your availability."
+                )
+            else:
+                message = (
+                    f"📅 **Upcoming Appointment Reminder (1 Day in Advance Notice):**\n\n"
+                    f"Your next visit is a **{appointment.get('type', 'Consultation')}** with **{appt_doc}**:\n"
+                    f"• **Date & Time:** {appt_date} at {appt_time}\n"
+                    f"• **Location:** {appt_loc}\n"
+                    f"• **Status:** {appt_status} ✓\n"
+                    f"• **Preparation:** {appt_prep}\n\n"
+                    "If you need to change your appointment, you can rebook to an alternate open slot in your Appointments tab."
+                )
         else:
             message = "You have no pending hospital appointments currently scheduled on file."
-        route = "Appointment Attendance"
+        route = "Appointment Attendance & Reschedule"
 
     return {
         "message": message,

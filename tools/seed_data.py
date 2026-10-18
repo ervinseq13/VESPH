@@ -448,7 +448,7 @@ MEDICINES_BASELINE = [
 # 22 Weekly Appointments for Dr. Rhea Mehta (18-24 Oct 2026)
 # Including Ananya Iyer on 22 Oct 2026 at 11:00 AM
 DR_RHEA_WEEKLY_APPTS = [
-    # Sunday 18 Oct 2026 (3)
+    # Sunday 18 Oct 2026 (2)
     {
         "appointment_id": "33333333-3333-3333-3333-333333333333",
         "patient_id": PID_RAHUL,
@@ -473,19 +473,7 @@ DR_RHEA_WEEKLY_APPTS = [
         "reminders_sent_count": 1,
         "appointment_summary": "Post-cholecystectomy Day 10 progress check and suture review.",
     },
-    {
-        "appointment_id": "33333333-3333-3333-3333-333333330003",
-        "patient_id": PID_AMIT,
-        "doctor_id": DOC_RHEA_ID,
-        "appointment_type": "Consultation",
-        "appointment_datetime": "2026-10-18 16:30:00",
-        "scheduled_by_role": "Doctor",
-        "status": "Confirmed",
-        "location": "OPD Wing B, Room 304",
-        "reminders_sent_count": 1,
-        "appointment_summary": "Evaluation of 2cm umbilical hernia defect and elective mesh hernioplasty discussion.",
-    },
-    # Monday 19 Oct 2026 (4)
+    # Monday 19 Oct 2026 (2)
     {
         "appointment_id": "33333333-3333-3333-3333-333333334001",
         "patient_id": PID_VIKRAM,
@@ -510,31 +498,7 @@ DR_RHEA_WEEKLY_APPTS = [
         "reminders_sent_count": 1,
         "appointment_summary": "Infected dorsal sebaceous cyst evaluation for elective minor excision under local anesthesia.",
     },
-    {
-        "appointment_id": "33333333-3333-3333-3333-333333330006",
-        "patient_id": PID_RAJESH,
-        "doctor_id": DOC_RHEA_ID,
-        "appointment_type": "Consultation",
-        "appointment_datetime": "2026-10-19 14:30:00",
-        "scheduled_by_role": "Doctor",
-        "status": "Confirmed",
-        "location": "OPD Wing B, Room 304",
-        "reminders_sent_count": 1,
-        "appointment_summary": "Recurrent symptomatic gallstone pancreatitis follow-up and elective laparoscopic cholecystectomy booking.",
-    },
-    {
-        "appointment_id": "33333333-3333-3333-3333-333333330007",
-        "patient_id": PID_SANGEETA,
-        "doctor_id": DOC_RHEA_ID,
-        "appointment_type": "FollowUp",
-        "appointment_datetime": "2026-10-19 16:00:00",
-        "scheduled_by_role": "Doctor",
-        "status": "Confirmed",
-        "location": "OPD Wing B, Room 304",
-        "reminders_sent_count": 1,
-        "appointment_summary": "Post-lumpectomy benign fibroadenoma 6-month check and ultrasound correlation.",
-    },
-    # Tuesday 20 Oct 2026 (3)
+    # Tuesday 20 Oct 2026 (2)
     {
         "appointment_id": "33333333-3333-3333-3333-333333334002",
         "patient_id": PID_SUNITA,
@@ -559,19 +523,7 @@ DR_RHEA_WEEKLY_APPTS = [
         "reminders_sent_count": 1,
         "appointment_summary": "Epigastric hernia with post-prandial ache, ultrasound shows 1.5cm defect with omental herniation.",
     },
-    {
-        "appointment_id": "33333333-3333-3333-3333-333333330010",
-        "patient_id": PID_POOJA,
-        "doctor_id": DOC_RHEA_ID,
-        "appointment_type": "FollowUp",
-        "appointment_datetime": "2026-10-20 15:30:00",
-        "scheduled_by_role": "Doctor",
-        "status": "Confirmed",
-        "location": "OPD Wing B, Room 304",
-        "reminders_sent_count": 1,
-        "appointment_summary": "Surgical wound dressing change and granulation tissue review post-abscess drainage.",
-    },
-    # Wednesday 21 Oct 2026 (4)
+    # Wednesday 21 Oct 2026 (2)
     {
         "appointment_id": "33333333-3333-3333-3333-333333334003",
         "patient_id": PID_ROHAN,
@@ -596,31 +548,7 @@ DR_RHEA_WEEKLY_APPTS = [
         "reminders_sent_count": 1,
         "appointment_summary": "Workup for diagnostic laparoscopy for chronic pelvic adhesions and unexplained lower quadrant pain.",
     },
-    {
-        "appointment_id": "33333333-3333-3333-3333-333333330013",
-        "patient_id": PID_DEEPAK,
-        "doctor_id": DOC_RHEA_ID,
-        "appointment_type": "FollowUp",
-        "appointment_datetime": "2026-10-21 14:00:00",
-        "scheduled_by_role": "Doctor",
-        "status": "Confirmed",
-        "location": "OPD Wing B, Room 304",
-        "reminders_sent_count": 1,
-        "appointment_summary": "Internal hemorrhoid rubber band ligation 2-week check, pain resolved, stool softeners review.",
-    },
-    {
-        "appointment_id": "33333333-3333-3333-3333-333333330014",
-        "patient_id": PID_FARHAN,
-        "doctor_id": DOC_RHEA_ID,
-        "appointment_type": "Consultation",
-        "appointment_datetime": "2026-10-21 16:15:00",
-        "scheduled_by_role": "Doctor",
-        "status": "Confirmed",
-        "location": "OPD Wing B, Room 304",
-        "reminders_sent_count": 1,
-        "appointment_summary": "Right reducible groin swelling upon heavy exertion, manual palpation deep ring occlusion test.",
-    },
-    # Thursday 22 Oct 2026 (3) - Includes Ananya Iyer!
+    # Thursday 22 Oct 2026 (2) - Includes Ananya Iyer
     {
         "appointment_id": "33333333-3333-3333-3333-333333331001",
         "patient_id": PID_ANANYA,
@@ -645,19 +573,7 @@ DR_RHEA_WEEKLY_APPTS = [
         "reminders_sent_count": 1,
         "appointment_summary": "Post-laparoscopic appendectomy Day 14 follow-up and physical activity clearance.",
     },
-    {
-        "appointment_id": "33333333-3333-3333-3333-333333330017",
-        "patient_id": PID_VANDANA,
-        "doctor_id": DOC_RHEA_ID,
-        "appointment_type": "Consultation",
-        "appointment_datetime": "2026-10-22 16:00:00",
-        "scheduled_by_role": "Doctor",
-        "status": "Confirmed",
-        "location": "OPD Wing B, Room 304",
-        "reminders_sent_count": 1,
-        "appointment_summary": "Chronic pelvic pain and ultrasound evaluation showing thick appendiceal wall, diagnostic laparoscopy discussion.",
-    },
-    # Friday 23 Oct 2026 (3)
+    # Friday 23 Oct 2026 (2)
     {
         "appointment_id": "33333333-3333-3333-3333-333333334004",
         "patient_id": PID_KAVITA,
@@ -681,18 +597,6 @@ DR_RHEA_WEEKLY_APPTS = [
         "location": "OPD Wing B, Room 304",
         "reminders_sent_count": 1,
         "appointment_summary": "Sacrococcygeal pilonidal sinus with intermittent discharge, scheduled for minimally invasive flap excision.",
-    },
-    {
-        "appointment_id": "33333333-3333-3333-3333-333333330020",
-        "patient_id": PID_MEENAKSHI,
-        "doctor_id": DOC_RHEA_ID,
-        "appointment_type": "FollowUp",
-        "appointment_datetime": "2026-10-23 15:00:00",
-        "scheduled_by_role": "Doctor",
-        "status": "Confirmed",
-        "location": "OPD Wing B, Room 304",
-        "reminders_sent_count": 1,
-        "appointment_summary": "Laparoscopic cholecystectomy Day 12 progress evaluation, port sites clean, advancing to normal diet.",
     },
     # Saturday 24 Oct 2026 (2)
     {

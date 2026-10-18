@@ -896,14 +896,21 @@ def block_doctor_slot_in_supabase(
         or []
     )
 
-    fallback_schedule = [
-        ("2026-10-23", "11:00 AM"),
-        ("2026-10-23", "03:00 PM"),
-        ("2026-10-24", "10:00 AM"),
-        ("2026-10-24", "11:30 AM"),
+    # 5. Dynamically generate fallback slots strictly after blocked_date, never on blocked_date
+    default_fallbacks = [
         ("2026-10-26", "10:00 AM"),
         ("2026-10-26", "02:00 PM"),
+        ("2026-10-27", "11:00 AM"),
+        ("2026-10-27", "03:30 PM"),
+        ("2026-10-28", "10:30 AM"),
+        ("2026-10-28", "02:30 PM"),
+        ("2026-10-29", "11:00 AM"),
+        ("2026-10-30", "10:00 AM"),
     ]
+    # Filter out any slots that match the blocked date
+    valid_fallbacks = [(d, s) for d, s in default_fallbacks if d != blocked_date]
+    if not valid_fallbacks:
+        valid_fallbacks = [("2026-10-27", "10:00 AM"), ("2026-10-28", "02:00 PM")]
 
     rebooked = []
     fallback_idx = 0
@@ -923,21 +930,22 @@ def block_doctor_slot_in_supabase(
                     is_conflict = True
 
             if is_conflict:
-                next_date, next_slot = fallback_schedule[min(fallback_idx, len(fallback_schedule) - 1)]
+                next_date, next_slot = valid_fallbacks[min(fallback_idx, len(valid_fallbacks) - 1)]
                 fallback_idx += 1
                 try:
                     new_dt = datetime.strptime(f"{next_date} {next_slot}", "%Y-%m-%d %I:%M %p").isoformat()
                 except Exception:
                     new_dt = f"{next_date}T10:00:00"
 
-                notice = f"Doctor was unavailable on {blocked_date} ({reason}). Automatically rebooked to {next_date} at {next_slot}."
+                notice = f"Doctor was unavailable on {blocked_date} ({reason}). Reschedule suggested for {next_date} at {next_slot}. Please confirm or select an alternate slot."
                 current_summary = a.get("appointment_summary") or ""
                 updated_summary = f"{current_summary}\n[Notice]: {notice}".strip()
 
+                # Status is Reschedule Pending because the patient must reconfirm or select a new slot
                 client.table("appointments").update(
                     {
                         "appointment_datetime": new_dt,
-                        "status": "Confirmed",
+                        "status": "Reschedule Pending",
                         "appointment_summary": updated_summary,
                     }
                 ).eq("appointment_id", a["appointment_id"]).execute()
@@ -950,11 +958,26 @@ def block_doctor_slot_in_supabase(
                         "new_date": next_date,
                         "new_slot": next_slot,
                         "reason": reason,
-                        "message": f"{doc_name} is unavailable on {blocked_date} due to {reason}. Your appointment has been automatically rebooked to {next_date} at {next_slot}.",
+                        "message": f"{doc_name} is unavailable on {blocked_date} due to {reason}. Reschedule suggested to {next_date} at {next_slot}. Awaiting patient confirmation.",
                     }
                 )
 
     return rebooked
+
+
+def verify_doctor_unavailability_in_supabase(client: Client, doctor_id: str, blocked_date: str) -> bool:
+    """Verify that unavailability has been recorded in Supabase."""
+    try:
+        resp = (
+            client.table("doctor_unavailability")
+            .select("unavailability_id")
+            .eq("doctor_id", doctor_id)
+            .eq("blocked_date", blocked_date)
+            .execute()
+        )
+        return bool(resp.data)
+    except Exception:
+        return False
 
 
 def unblock_doctor_slot_in_supabase(client: Client, unavailability_id: str) -> None:

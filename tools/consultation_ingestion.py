@@ -550,3 +550,42 @@ def generate_sample_consultation_pdf() -> bytes:
     buf = io.BytesIO()
     pdf.output(buf)
     return buf.getvalue()
+
+
+def format_ingestion_report(res: dict[str, Any], doc_title: str) -> str:
+    """Format a comprehensive, structured clinical sync report for doctor chat."""
+    p_name = res.get("patient_name", "Patient")
+    pid = str(res.get("patient_id", ""))
+    pid_short = f"PID-{pid.replace('-', '').upper()[:5]}" if pid else "PID-8421"
+    diagnosis = res.get("diagnosis", "Clinical Consultation")
+    new_summary = res.get("new_summary", "Updated patient clinical trajectory.")
+    cid = str(res.get("consultation_id", ""))[:8]
+
+    md = [
+        "### 📑 Consultation Ingested & Database Synchronized",
+        f"**Source Document:** {doc_title}  ",
+        f"**Target Patient:** {p_name} (`{pid_short}`)  ",
+        f"**Primary Diagnosis:** {diagnosis}  ",
+        "",
+        "#### 🔄 Live Supabase Updates Applied:",
+        f"- ✅ **Patient Summary Field Updated:** \"{new_summary}\"",
+        f"- ✅ **New Consultation Record Logged:** ID `{cid}...`",
+    ]
+    if res.get("appointments_created"):
+        md.append(f"- ✅ **Follow-up Appointments Scheduled ({len(res['appointments_created'])}):**")
+        for a in res["appointments_created"]:
+            md.append(f"  - 📅 **{a['date']} at {a['time']}** ({a['type']}) · {a.get('summary', '')}")
+    if res.get("medications_added"):
+        md.append(f"- ✅ **Prescriptions Scheduled by Mealtime ({len(res['medications_added'])}):**")
+        for m in res["medications_added"]:
+            meal_icon = "🍳" if m.get("meal_timing") == "breakfast" else ("🥗" if m.get("meal_timing") == "lunch" else "🍲")
+            md.append(f"  - {meal_icon} **{str(m.get('meal_timing', 'daily')).title()}:** {m.get('name')} {m.get('dosage')} · {m.get('instructions')} ({m.get('duration_days', 7)} days)")
+    if res.get("diagnostics_ordered"):
+        md.append(f"- ✅ **Diagnostics Ordered ({len(res['diagnostics_ordered'])}):**")
+        for d in res["diagnostics_ordered"]:
+            md.append(f"  - 🔬 **{d.get('name')}** ({d.get('category')}) · {d.get('summary', '')}")
+
+    md.append("")
+    md.append("> 💡 *Switch to **👤 Patient View** above to inspect live updated clinical summary, newly scheduled mealtime medications, and confirmed follow-up visits.*")
+    return "\n".join(md)
+

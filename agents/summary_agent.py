@@ -103,6 +103,49 @@ def _handle(
                 "Discharge Summary",
             )
 
+    # Branch 1: Specific Health trends & recovery progress (checked before generic discharge/recovery)
+    if any(term in text for term in ("trend", "progress", "recovery trend", "how am i healing", "healing")):
+        vitals_trend = "Blood pressure is stable at 118/76 mmHg. White blood cell count (CBC) improved from post-op 14.2 to 10.4 x10^3/uL (within normal limits)."
+        return _reply(
+            f"**Clinical Recovery Trend for {patient.get('first_name', 'Patient')}:**\n\n"
+            f"• **Surgical Healing:** Post-laparoscopic appendectomy Day 10 progress shows clean incisions with no erythema or active discharge.\n"
+            f"• **Biomarker Trends:** {vitals_trend}\n"
+            f"• **Ambulation:** Tolerating soft diet well, advancing towards full physical recovery.\n\n"
+            "Your surgical healing trajectory is on schedule for full discharge clearance.",
+            "Health Trends",
+        )
+
+    # Branch 2: Specific Medication adherence & compliance (checked before generic medication list)
+    if any(term in text for term in ("adherence", "compliance", "prescribed vs taken", "did i take all", "how many taken")):
+        meds = data.get("medications", [])
+        total = len(meds)
+        taken_count = sum(1 for m in meds if m.get("is_taken"))
+        pct = int((taken_count / total * 100)) if total else 0
+        return _reply(
+            f"**Medication Adherence Overview:**\n\n"
+            f"• **Prescribed Regimen:** {total} active medications\n"
+            f"• **Doses Recorded as Taken:** {taken_count} of {total} ({pct}% adherence today)\n"
+            f"• **Pending:** {total - taken_count} dose(s) remaining for today.\n\n"
+            "Keep maintaining consistent mealtime adherence for optimal incision healing and pain management.",
+            "Medication Adherence",
+        )
+
+    # Branch 3: Doctor summary (credentials, qualifications, department, room)
+    if any(
+        term in text
+        for term in ("dr.", "doctor", "dr rhea", "rhea mehta", "surgeon", "consultant", "who is my doctor")
+    ):
+        doc_name = patient.get("doctor", "Dr. Rhea Mehta")
+        return _reply(
+            f"**Doctor Profile – {doc_name}:**\n\n"
+            f"• **Qualifications:** MBBS, MS (General Surgery)\n"
+            f"• **Department:** General Surgery & Laparoscopic Care\n"
+            f"• **Location:** OPD Wing B, Room 304\n"
+            f"• **Clinical Focus:** Minimally invasive abdominal and laparoscopic surgery, post-operative surgical wound monitoring.\n\n"
+            f"{doc_name} is your primary lead consultant overseeing your appendectomy recovery and follow-up reviews.",
+            "Doctor Summary",
+        )
+
     if any(
         term in text
         for term in ("medicine", "medication", "tablet", "dose", "inhaler")
@@ -153,9 +196,9 @@ def _handle(
 
     return {
         "message": (
-            "I can help with your health summary, appointments, reports, medicines, "
-            "discharge guidance, or route an issue to the hospital team. Try asking "
-            "“When is my next appointment?”"
+            "I can help with your health summary, clinical trends, doctor profile, appointments, "
+            "reports, medicines, discharge guidance, or route an issue to the hospital team. "
+            "Try asking “When is my next appointment?” or “Tell me about Dr. Rhea Mehta”."
         ),
         "agent": "Follow-up Assistant · Router",
         "escalated": False,

@@ -17,6 +17,7 @@ from tools.consultation_ingestion import (
 from chat_service import answer_chat, is_connection_query
 from integrations import IntegrationHub, IntegrationSettings
 from orchestrator.graph import build_orchestrator, resolve
+from orchestrator.doctor_orchestrator import run_doctor_orchestrator
 from tools.db_tools import (
     fetch_patient_snapshot,
     fetch_all_patients,
@@ -871,34 +872,8 @@ def handle_consultation_pdf_ingestion(pdf_bytes: bytes, file_name: str = "Upload
 
 
 def add_doctor_chat_message(prompt: str, doc_snapshot: dict[str, Any]) -> None:
-    """Process doctor queries or raw consultation notes in the doctor panel."""
+    """Process doctor queries, schedule questions, or notes via the Doctor Multi-Agent Orchestrator."""
     st.session_state.doctor_messages.append({"role": "user", "content": prompt})
-    lowered = prompt.lower()
-    clinical_keywords = ["diagnosis", "consultation", "patient:", "vitals", "rx:", "prescribe", "follow-up", "bp:"]
-    matched_count = sum(1 for kw in clinical_keywords if kw in lowered)
-
-    if matched_count >= 2 or ("patient" in lowered and ("rx" in lowered or "prescribe" in lowered or "follow-up" in lowered)):
-        client = INTEGRATIONS.supabase_client()
-        groq_c = INTEGRATIONS._groq_client() if INTEGRATIONS.groq_configured else None
-        parsed = parse_consultation_text(prompt, groq_client=groq_c)
-        res = ingest_consultation_to_supabase(
-            client,
-            parsed,
-            doctor_id=st.session_state.active_doctor_id,
-            default_patient_id=st.session_state.active_patient_id,
-        )
-        report_md = format_ingestion_report(res, "Clinical Consultation Note")
-        st.session_state.doctor_messages.append({
-            "role": "assistant",
-            "content": report_md,
-            "agent": "Clinical Ingestion & RAG Agent",
-        })
-        st.session_state._patient_data_id = None
-        st.session_state._doctor_data_id = None
-        st.session_state._loaded_patient_id = None
-        record_activity_update("Consultation note ingested and synced to database")
-        st.session_state["doctor_toast"] = ("Consultation note ingested and synced to Supabase!", "✅")
-        return
 
     if is_connection_query(prompt):
         st.session_state.doctor_messages.append({
@@ -911,203 +886,46 @@ def add_doctor_chat_message(prompt: str, doc_snapshot: dict[str, Any]) -> None:
     client = INTEGRATIONS.supabase_client()
     all_patients = fetch_all_patients(client)
     patients_summary = [
-        {"id": p.get("patient_id"), "name": p.get("name"), "age": p.get("age"), "gender": p.get("gender"), "summary": p.get("summary")}
-        for p in all_patients[:22]
+        {"patient_id": p.get("patient_id"), "name": p.get("name"), "age": p.get("age"), "gender": p.get("gender"), "summary": p.get("summary")}
+        for p in all_patients[:25]
     ]
 
     all_doctor_appts = doc_snapshot.get("all_appointments", [])
     if not all_doctor_appts:
         all_doctor_appts = doc_snapshot.get("today_appointments", []) + doc_snapshot.get("week_appointments", [])
 
-    doc_care_data = {
+    orchestrator_snapshot = {
         "doctor": doc_snapshot.get("doctor", {}),
-        "appointments": all_doctor_appts,
-        "today_appointments": doc_snapshot.get("today_appointments", []),
-        "week_appointments": doc_snapshot.get("week_appointments", []),
-        "stats": doc_snapshot.get("stats", {}),
-        "unavailability": doc_snapshot.get("unavailability", []),
+        "all_appointments": all_doctor_appts,
         "patients_overview": patients_summary,
+        "active_patient_id": st.session_state.get("active_patient_id", "22222222-2222-2222-2222-222222222222"),
+        "groq_client": INTEGRATIONS._groq_client() if INTEGRATIONS.groq_configured else None,
     }
 
-    # Only include specific patient chart if doctor explicitly asked about that patient
-    lowered_q = prompt.lower().strip()
+    pending_action = st.session_state.get("_doctor_pending_action")
+    res = run_doctor_orchestrator(
+        query=prompt,
+        doc_snapshot=orchestrator_snapshot,
+        client=client,
+        pending_action=pending_action,
+        current_week_choice=st.session_state.get("doc_agenda_week_choice", "This (18–24 Oct)"),
+    )
 
-    # 1. Acknowledgment check (e.g. "ok", "thanks")
-    acknowledgments = {"ok", "okay", "k", "thanks", "thank you", "thx", "got it", "great", "perfect", "cool", "noted", "understood", "all right", "alright", "ok thanks", "okay thanks"}
-    if lowered_q in acknowledgments:
-        st.session_state.doctor_messages.append({
-            "role": "assistant",
-            "content": "You're welcome! Let me know if you need to check other schedules, review patient records, or update OPD availability.",
-            "agent": "Clinical Assistant",
-        })
-        return
+    # Store or clear pending action
+    if "pending_action" in res:
+        st.session_state._doctor_pending_action = res["pending_action"]
 
-    # 2. Multi-turn confirmation check (e.g. user replies "yes", "confirm", "proceed", "go ahead")
-    is_confirmation = lowered_q in {
-        "yes", "yep", "yeah", "sure", "confirm", "proceed", "please do",
-        "go ahead", "do it", "yes please", "yes, please", "block it"
-    }
-
-    last_assistant_msg = ""
-    for m in reversed(st.session_state.doctor_messages[:-1]):
-        if m.get("role") == "assistant":
-            last_assistant_msg = m.get("content", "")
-            break
-
-    pending_block_date = st.session_state.get("_pending_block_date")
-    if not pending_block_date and ("would you like me to block this day" in last_assistant_msg.lower() or "scheduled on that date" in last_assistant_msg.lower()):
-        for d_num in range(1, 32):
-            if f"{d_num}th" in last_assistant_msg.lower() or f"{d_num}st" in last_assistant_msg.lower() or f"{d_num}nd" in last_assistant_msg.lower() or f"{d_num}rd" in last_assistant_msg.lower() or f"{d_num} oct" in last_assistant_msg.lower():
-                pending_block_date = f"2026-10-{d_num:02d}"
-                break
-
-    # Direct command to block in current prompt (e.g., "I'm not available on 22nd oct, block this day...")
-    direct_block_command = ("block" in lowered_q or "unavailable" in lowered_q or "off" in lowered_q) and ("reschedule" in lowered_q or "escalat" in lowered_q or "supabase" in lowered_q)
-    if direct_block_command and not pending_block_date:
-        for d_num in range(1, 32):
-            if (f"{d_num}th" in lowered_q or f"{d_num}st" in lowered_q or f"{d_num}nd" in lowered_q or f"{d_num}rd" in lowered_q or f" {d_num} " in f" {lowered_q} "):
-                pending_block_date = f"2026-10-{d_num:02d}"
-                break
-
-    if (is_confirmation and pending_block_date) or (direct_block_command and pending_block_date):
-        client = INTEGRATIONS.supabase_client()
-        affected = []
-        try:
-            block_doctor_slot_in_supabase(
-                client=client,
-                doctor_id=st.session_state.active_doctor_id,
-                blocked_date=pending_block_date,
-                blocked_slot=None,
-                reason="Doctor Unavailable - Leave",
-            )
-            day_str = pending_block_date.split("-")[-1]
-            affected = [
-                a for a in all_doctor_appts
-                if pending_block_date in str(a.get("raw_datetime") or "") or f"{int(day_str)} oct" in str(a.get("date") or "").lower()
-            ]
-            for a in affected:
-                try:
-                    update_appointment_in_supabase(client, a["id"], "Reschedule Pending")
-                except Exception:
-                    pass
-        except Exception as err:
-            print(f"Error executing slot block in Supabase: {err}")
-
-        st.session_state._pending_block_date = None
+    if res.get("db_updated"):
         st.session_state._doctor_data_id = None
         st.session_state._patient_data_id = None
         st.session_state._loaded_patient_id = None
-        record_activity_update(f"Blocked {pending_block_date} and escalated appointments")
-        st.session_state["doctor_toast"] = (f"Blocked {pending_block_date} & escalations sent!", "✅")
-
-        patient_lines = "\n".join([f"• **{a.get('time', 'OPD')}:** {escape(a.get('patient_name', 'Patient'))} ({escape(a.get('type', 'Consultation'))}) – Status: *Reschedule requested*" for a in affected]) if affected else "• No active patient conflicts found."
-        confirm_reply = (
-            f"✅ **Unavailability Recorded in Supabase & Priority Reschedule Initiated:**\n\n"
-            f"**Date:** {pending_block_date} is now recorded as **Blocked (Leave)** in the Supabase schedule.\n\n"
-            f"**Affected Appointments ({len(affected)}):**\n"
-            f"{patient_lines}\n\n"
-            "All affected patients have been notified of the pending reschedule. The care team has triggered automatic rebooking to the next available OPD slots."
-        )
-        st.session_state.doctor_messages.append({
-            "role": "assistant",
-            "content": confirm_reply,
-            "agent": "Doctor Scheduling & Escalation Agent",
-        })
-        return
-
-    # 3. Check for generic patient summary without specific patient name
-    generic_patient_queries = [
-        "patient info / summary", "patient info/summary", "patient info",
-        "patient summary", "patient details", "patient chart",
-        "show patient summary", "get patient info"
-    ]
-    mentioned_patient = None
-    for p in all_patients:
-        p_name = p.get("name", "").lower()
-        p_first = p.get("first_name", "").lower()
-        if (p_name and p_name in lowered_q) or (p_first and len(p_first) > 3 and p_first in lowered_q):
-            mentioned_patient = p
-            break
-
-    if (lowered_q in generic_patient_queries or ("patient" in lowered_q and "summary" in lowered_q and not mentioned_patient)):
-        sample_patients = [
-            ("Ananya Iyer", "PID-8421", "Post-laparoscopic appendectomy recovery"),
-            ("Vikram Malhotra", "ID: 2225", "Inguinal hernia workup & TEP repair"),
-            ("Neha Kapoor", "ID: 2230", "Dorsal sebaceous cyst evaluation"),
-            ("Sandeep Mehra", "ID: 2235", "Post-appendectomy Day 14 follow-up"),
-            ("Vandana Rao", "ID: 2240", "Chronic pelvic pain consultation"),
-        ]
-        options_text = "\n".join([f"• **{name}** ({pid}) – {desc}" for name, pid, desc in sample_patients])
-        reply = (
-            "Which patient would you like to review?\n\n"
-            "Here are active patients from your OPD roster:\n"
-            f"{options_text}\n\n"
-            "Please enter a patient name or ID to view their clinical chart and summary."
-        )
-        st.session_state.doctor_messages.append({
-            "role": "assistant",
-            "content": reply,
-            "agent": "Clinical Assistant · Patient Records",
-        })
-        return
-
-    # If specific patient was mentioned, attach their chart
-    if mentioned_patient:
-        doc_care_data["active_patient_chart"] = {
-            "name": mentioned_patient.get("name"),
-            "summary": mentioned_patient.get("summary"),
-            "age": mentioned_patient.get("age"),
-            "gender": mentioned_patient.get("gender"),
-            "allergies": mentioned_patient.get("allergies"),
-            "chronic_conditions": mentioned_patient.get("chronic_conditions"),
-        }
-
-    # Pass 10 messages context to Groq
-    recent_ctx = st.session_state.doctor_messages[:-1][-10:]
-    reply = INTEGRATIONS.answer_with_groq(
-        prompt,
-        doc_care_data,
-        recent_messages=recent_ctx,
-        persona="doctor",
-    )
-    if not reply:
-        doc_name = doc_snapshot.get("doctor", {}).get("name", "Dr. Rhea Mehta")
-        # Context-aware schedule check for availability/offs on a date
-        matched_date_appts = []
-        matched_day_num = None
-        for a in all_doctor_appts:
-            dt_raw = str(a.get("raw_datetime") or a.get("date") or "")
-            for day_num in range(1, 32):
-                day_pat = f"{day_num:02d}"
-                if (f"{day_num}th" in lowered_q or f"{day_num}st" in lowered_q or f"{day_num}nd" in lowered_q or f"{day_num}rd" in lowered_q or f" {day_num} " in f" {lowered_q} "):
-                    if f"-10-{day_pat}" in dt_raw or f"{day_num} oct" in dt_raw.lower():
-                        matched_date_appts.append(a)
-                        matched_day_num = day_num
-
-        if ("available" in lowered_q or "off" in lowered_q or "leave" in lowered_q or "block" in lowered_q) and matched_date_appts:
-            if matched_day_num:
-                st.session_state._pending_block_date = f"2026-10-{matched_day_num:02d}"
-            lines = [f"• **{a.get('time', 'OPD')}:** {escape(a.get('patient_name', 'Patient'))} ({escape(a.get('type', 'Consultation'))} - {escape(a.get('summary', ''))})" for a in matched_date_appts]
-            reply = (
-                f"**Schedule Notice for {escape(doc_name)}:**\n\n"
-                f"You have **{len(matched_date_appts)} appointment(s)** scheduled on that date:\n"
-                + "\n".join(lines)
-                + "\n\nWould you like me to block this day in Supabase and trigger priority reschedule escalations for these patients?"
-            )
-        else:
-            today_cnt = len(doc_snapshot.get("today_appointments", []))
-            week_cnt = len(doc_snapshot.get("week_appointments", []))
-            reply = (
-                f"**Clinical Status Overview for {escape(doc_name)}:**\n\n"
-                f"• **Today's OPD Consultations:** {today_cnt} patients scheduled\n"
-                f"• **Weekly Workload:** {week_cnt} appointments on agenda (18–24 Oct 2026)\n"
-                "Ask about upcoming appointments, clinic offs and blocked slots, or patient clinical charts."
-            )
+        record_activity_update("Doctor action committed to database")
+        st.session_state["doctor_toast"] = ("Schedule & database successfully updated!", "✅")
 
     st.session_state.doctor_messages.append({
         "role": "assistant",
-        "content": reply,
-        "agent": f"Groq Clinical Assistant · {INTEGRATIONS.settings.groq_model}" if INTEGRATIONS.groq_configured else "Clinical Assistant",
+        "content": res["message"],
+        "agent": res["agent"],
     })
 
 
@@ -2177,7 +1995,7 @@ def render_patient_portal() -> None:
         )
 
         with appointments_tab:
-            _, head_b = st.columns([1.6, 0.4])
+            _, head_b = st.columns([1.6, 0.4], vertical_alignment="center")
             with head_b:
                 if st.button("＋ Add", key="new_appointment_tab", use_container_width=True):
                     add_item_dialog("New appointment")
@@ -2197,7 +2015,7 @@ def render_patient_portal() -> None:
                     )
 
         with diagnostics_tab:
-            _, head_b = st.columns([1.6, 0.4])
+            _, head_b = st.columns([1.6, 0.4], vertical_alignment="center")
             with head_b:
                 if st.button("＋ Upload", key="add_report_tab", use_container_width=True):
                     add_item_dialog("Diagnostic report")
@@ -2227,7 +2045,7 @@ def render_patient_portal() -> None:
                 )
 
         with medications_tab:
-            head_a, head_b = st.columns([1, 0.52])
+            head_a, head_b = st.columns([1.6, 0.4], vertical_alignment="center")
             with head_a:
                 st.caption("GROUPED BY MEALTIME: BREAKFAST · LUNCH · DINNER")
             with head_b:
@@ -2287,7 +2105,7 @@ def render_patient_portal() -> None:
                                 st.rerun()
 
         with discharge_tab:
-            head_a, head_b = st.columns([1, 0.52])
+            head_a, head_b = st.columns([1.6, 0.4], vertical_alignment="center")
             with head_a:
                 st.caption("RECENT → OLDER")
             with head_b:
@@ -2349,6 +2167,20 @@ def render_patient_portal() -> None:
                             f'<div class="escalation-resolved">Confirmed plan · {escape(escalation["resolution"])}</div>',
                             unsafe_allow_html=True,
                         )
+
+            # Auto-scroll anchor to ensure the newest message is always visible without scrolling
+            st.markdown(
+                '<div id="patient-chat-bottom-anchor"></div>'
+                '<script>'
+                'setTimeout(function() {'
+                '  var el = document.getElementById("patient-chat-bottom-anchor");'
+                '  if (el) { el.scrollIntoView({ behavior: "smooth", block: "end" }); }'
+                '  var boxes = document.querySelectorAll("[data-testid=\'stVerticalBlock\']:has(#patient-chat-bottom-anchor)");'
+                '  boxes.forEach(function(b) { b.scrollTop = b.scrollHeight; });'
+                '}, 60);'
+                '</script>',
+                unsafe_allow_html=True,
+            )
 
         with st.container(key="chat_dock"):
             upload_col, form_col = st.columns([0.18, 1.18], gap="small")
@@ -2601,7 +2433,6 @@ def render_doctor_portal() -> None:
                 notice_html = f'<div class="rebook-notice">⚠️ <strong>Notice:</strong> {escape(rebook_notice)}</div>' if rebook_notice else ""
 
                 with st.container(key=f"agenda_box_{idx}"):
-                    st.markdown('<div class="agenda-card-wrapper">', unsafe_allow_html=True)
                     st.markdown(
                         f"""
                         <div class="agenda-card">
@@ -2645,6 +2476,20 @@ def render_doctor_portal() -> None:
                         f'<div class="agent-route">{escape(message["agent"])}</div>',
                         unsafe_allow_html=True,
                     )
+
+            # Auto-scroll anchor to ensure the newest message is always visible without scrolling
+            st.markdown(
+                '<div id="doc-chat-bottom-anchor"></div>'
+                '<script>'
+                'setTimeout(function() {'
+                '  var el = document.getElementById("doc-chat-bottom-anchor");'
+                '  if (el) { el.scrollIntoView({ behavior: "smooth", block: "end" }); }'
+                '  var boxes = document.querySelectorAll("[data-testid=\'stVerticalBlock\']:has(#doc-chat-bottom-anchor)");'
+                '  boxes.forEach(function(b) { b.scrollTop = b.scrollHeight; });'
+                '}, 60);'
+                '</script>',
+                unsafe_allow_html=True,
+            )
 
         with st.container(key="doctor_chat_dock"):
             upload_col, form_col = st.columns([0.18, 1.18], gap="small")
