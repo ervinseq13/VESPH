@@ -153,7 +153,7 @@ class IntegrationHub:
             return None
 
         history = []
-        for message in (recent_messages or [])[-6:]:
+        for message in (recent_messages or [])[-10:]:
             role = message.get("role")
             content = message.get("content")
             if role in {"user", "assistant"} and isinstance(content, str):
@@ -194,11 +194,14 @@ class IntegrationHub:
                 + f"\n\nDoctor Query / Statement: {query}\n\n"
                 + "Instructions:\n"
                 + "1. You are the Clinical Assistant for this doctor.\n"
-                + "2. If the doctor mentions availability, clinic offs, or time off (e.g. 'I won't be available on 20th October'): "
+                + "2. Keep your answers concise, complete, and properly terminated (max 3-5 bullet points, under 150 words). Fit cleanly in the chat window and NEVER cut off mid-sentence.\n"
+                + "3. If the doctor mentions availability, clinic offs, or time off (e.g. 'I won't be available on 20th October'): "
                 + "look up the doctor's scheduled appointments for that date, list the affected patients and times, and offer to block the day and trigger reschedule notifications. "
                 + "Do NOT assume or mention Ananya Iyer unless the doctor specifically asked about Ananya.\n"
-                + "3. If the doctor asks for an appointment summary, summarize upcoming bookings by date.\n"
-                + "4. If the doctor asks about a specific patient, summarize that patient's details from the record."
+                + "4. If the doctor asks for a patient summary or patient info without naming a specific patient, do NOT assume a patient. Ask which patient they are inquiring about and mention 3-4 names from the patient roster.\n"
+                + "5. If the doctor confirms an action (e.g. 'yes', 'confirm', 'go ahead' to blocking a day or rescheduling), acknowledge the confirmation and state that the schedule has been updated in Supabase and escalations triggered.\n"
+                + "6. If the doctor asks for an appointment summary, summarize upcoming bookings by date.\n"
+                + "7. If the doctor asks about a specific patient, summarize that patient's details from the record in under 120 words."
             )
         else:
             p_name = care_data.get("patient", {}).get("first_name", "Patient")
@@ -227,7 +230,7 @@ class IntegrationHub:
                 model=self.settings.groq_model,
                 messages=messages,
                 temperature=0.2,
-                max_completion_tokens=420,
+                max_completion_tokens=650,
             )
             content = response.choices[0].message.content
             return content.strip() if content else None
