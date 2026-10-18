@@ -1008,14 +1008,20 @@ def reset_supabase_database(client: Client) -> None:
         PAYMENT_BASELINE,
     )
 
-    try:
-        client.table("doctor_unavailability").delete().neq("unavailability_id", "00000000-0000-0000-0000-000000000000").execute()
-    except Exception:
-        pass
-
-    for p_id_to_del in ALL_BASELINE_PATIENT_IDS:
+    # Cleanly remove all old/pending appointments, doctor blocks, and related records
+    for tbl, pk in [
+        ("doctor_unavailability", "unavailability_id"),
+        ("escalation_agent_data", "ticket_id"),
+        ("diagnostics_results", "result_id"),
+        ("diagnostics", "order_id"),
+        ("prescription_details", "prescription_item_id"),
+        ("consultations", "consultation_id"),
+        ("operation", "operation_id"),
+        ("payment_details", "payment_id"),
+        ("appointments", "appointment_id"),
+    ]:
         try:
-            client.table("escalation_agent_data").delete().eq("patient_id", p_id_to_del).execute()
+            client.table(tbl).delete().neq(pk, "00000000-0000-0000-0000-000000000000").execute()
         except Exception:
             pass
 

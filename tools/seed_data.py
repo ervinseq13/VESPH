@@ -755,7 +755,7 @@ ANANYA_30_APPTS = [
         "appointment_id": "33333333-3333-3333-3333-333333331003",
         "patient_id": PID_ANANYA,
         "doctor_id": DOC_RHEA_ID,
-        "appointment_type": "Emergency",
+        "appointment_type": "Consultation",
         "appointment_datetime": "2026-10-08 14:00:00",
         "scheduled_by_role": "Doctor",
         "status": "Completed",
