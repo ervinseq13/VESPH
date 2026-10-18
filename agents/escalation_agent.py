@@ -12,32 +12,22 @@ from tools.db_tools import create_escalation
 
 
 EMERGENCY_TERMS = (
-    "emergency",
-    "chest pain",
-    "can't breathe",
-    "cannot breathe",
-    "severe pain",
-    "fainted",
-    "unconscious",
-    "heavy bleeding",
+    "emergency", "chest pain", "can't breathe", "cannot breathe",
+    "severe pain", "fainted", "unconscious", "heavy bleeding",
+    "i think i'm having a heart attack", "something is really wrong",
+    "i collapsed", "can't stop bleeding",
 )
 ESCALATION_TERMS = EMERGENCY_TERMS + (
-    "wrong report",
-    "someone else",
-    "not my report",
-    "reissue",
-    "old report",
-    "previous report",
-    "report copy",
-    "doctor not available",
-    "doctor is not available",
-    "doctor unavailable",
-    "doctor is unavailable",
-    "missed appointment",
-    "new appointment",
-    "place new test",
-    "new test",
-    "order a test",
+    "wrong report", "someone else", "not my report", "this isn't mine",
+    "reissue", "old report", "previous report", "report copy",
+    "i need a copy", "can you resend",
+    "doctor not available", "doctor is not available",
+    "doctor unavailable", "doctor is unavailable",
+    "my doctor isn't in", "doctor didn't show up",
+    "missed appointment", "i missed my visit",
+    "new appointment", "i need a new appointment",
+    "place new test", "new test", "order a test",
+    "doctor wants a new test", "need new labs",
 )
 
 
@@ -84,8 +74,8 @@ def _details(text: str, patient_id: str) -> tuple[str, str, str, list[str], str]
             "Previous report requested",
             (
                 "I can send a reissue request to the Records Desk. Available records include "
-                "CBC (16 Sep), appendix histopathology (10 Sep), and ultrasound abdomen "
-                "(7 Sep)."
+                "CBC (16 Oct), appendix histopathology (10 Oct), and ultrasound abdomen "
+                "(7 Oct)."
             ),
             [
                 "Reissue the latest report",
@@ -126,7 +116,7 @@ def _details(text: str, patient_id: str) -> tuple[str, str, str, list[str], str]
         "Appointment needs staff review",
         (
             "I can route this to the scheduling desk. Dr. Kabir Sen has General Surgery "
-            "availability on 24 Sep if Dr. Rhea Mehta is unavailable. No booking will be "
+            "availability on 24 Oct if Dr. Rhea Mehta is unavailable. No booking will be "
             "changed until you confirm how to proceed."
         ),
         [

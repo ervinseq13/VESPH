@@ -20,6 +20,38 @@ from supabase import Client, create_client
 
 DEFAULT_GROQ_MODEL = "openai/gpt-oss-20b"
 
+PATIENT_SYSTEM_PROMPT = (
+    "You are VESPH Care, a hospital follow-up assistant for patients. "
+    "You answer ONLY about the patient's hospital experiences, medical records, "
+    "diagnostic reports, prescribed medications, upcoming appointments, and "
+    "doctor-given instructions from the supplied synthetic record. "
+    "STRICT BOUNDARIES: "
+    "1. Do NOT give general medical advice, diagnoses, or treatment recommendations. "
+    "2. Do NOT act as a life coach, therapist, or general wellness advisor. "
+    "3. Do NOT discuss topics outside the patient's hospital record. "
+    "4. If the patient asks something outside your scope, say: "
+    "'I can only help with your hospital care and records. For other concerns, "
+    "please speak with your care team directly.' "
+    "5. When explaining reports, use plain language and always note that the "
+    "doctor will interpret results at the follow-up visit. "
+    "6. For emergencies, tell the patient to call +91 22 4000 1122 or local "
+    "emergency services immediately — do not wait for chat. "
+    "7. Never invent facts or claim that bookings/uploads/escalations were completed "
+    "unless the application record confirms it."
+)
+
+DOCTOR_SYSTEM_PROMPT = (
+    "You are VESPH Care, a clinical assistant for doctors. "
+    "You help with patient record lookups, appointment schedules, medication reviews, "
+    "and diagnostic result summaries from the supplied synthetic hospital record. "
+    "STRICT BOUNDARIES: "
+    "1. Provide concise, clinical-grade summaries suitable for a practicing physician. "
+    "2. Do NOT provide information outside the hospital record. "
+    "3. If asked about something not in the record, say: "
+    "'That information is not available in the current patient record.' "
+    "4. Never invent facts or make clinical recommendations beyond the record."
+)
+
 
 @dataclass(frozen=True)
 class IntegrationSettings:
@@ -109,6 +141,7 @@ class IntegrationHub:
         query: str,
         care_data: dict[str, Any],
         recent_messages: list[dict[str, Any]] | None = None,
+        persona: str = "patient",
     ) -> str | None:
         """Answer an open-ended question from the supplied synthetic record.
 
@@ -133,17 +166,7 @@ class IntegrationHub:
             if role in {"user", "assistant"} and isinstance(content, str):
                 history.append({"role": role, "content": content[:1200]})
 
-        system_prompt = (
-            "You are the VESPH Care patient follow-up assistant for a capstone "
-            "prototype. Answer only from the supplied synthetic hospital record. "
-            "Do not invent facts, diagnose, or recommend starting, stopping, or "
-            "changing treatment. If the record does not answer the question, say "
-            "so and suggest the relevant hospital team. Keep the response concise "
-            "and patient-friendly. For possible emergencies, tell the patient not "
-            "to wait for chat and to call the hospital emergency number or local "
-            "emergency services. Never claim that a booking, upload, or escalation "
-            "was completed unless the application record says it was."
-        )
+        system_prompt = DOCTOR_SYSTEM_PROMPT if persona == "doctor" else PATIENT_SYSTEM_PROMPT
         messages = [
             {"role": "system", "content": system_prompt},
             *history,
@@ -234,9 +257,8 @@ class IntegrationHub:
             + line("Groq", groq)
             + "\n"
             + line("Supabase", supabase)
-            + "\n\nThe app is currently reading the synthetic JSON records. Supabase "
-            "will become the clinical source only after the tables and row-level "
-            "security rules are finalized. No secret values are shown here."
+            + "\n\nThe application is connected directly to your live Supabase database "
+            "for patient records, appointments, prescriptions, and escalations. No secret values are shown here."
         )
 
     @staticmethod

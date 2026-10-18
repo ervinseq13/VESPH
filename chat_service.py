@@ -57,6 +57,7 @@ def answer_chat(
     *,
     recent_messages: list[dict[str, Any]] | None = None,
     thread_id: str | None = None,
+    persona: str = "patient",
 ) -> ChatReply:
     """Use deterministic safety routes first and Groq only for open questions."""
 
@@ -85,6 +86,7 @@ def answer_chat(
         prompt,
         care_data,
         recent_messages=recent_messages,
+        persona=persona,
     )
     if generated:
         return ChatReply(

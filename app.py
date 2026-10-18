@@ -1,18 +1,41 @@
 from __future__ import annotations
 
+from datetime import datetime
 from html import escape
 from pathlib import Path
 
 import streamlit as st
 
-from chat_service import answer_chat
-from data_store import load_demo_data
+from tools.pdf_tools import generate_record_pdf
+from tools.consultation_ingestion import (
+    extract_text_from_pdf,
+    parse_consultation_text,
+    ingest_consultation_to_supabase,
+    generate_sample_consultation_pdf,
+)
+
+from chat_service import answer_chat, is_connection_query
 from integrations import IntegrationHub, IntegrationSettings
 from orchestrator.graph import build_orchestrator, resolve
+from tools.db_tools import (
+    fetch_patient_snapshot,
+    fetch_all_patients,
+    fetch_all_doctors,
+    fetch_doctor_snapshot,
+    block_doctor_slot_in_supabase,
+    unblock_doctor_slot_in_supabase,
+    book_appointment_by_doctor,
+    register_patient_and_book,
+    update_appointment_in_supabase,
+    toggle_prescription_taken_in_supabase,
+    reset_supabase_database,
+    generate_available_slots,
+)
 
 
 ASSET_DIR = Path(__file__).resolve().parent / "assets"
 PATIENT_CHAT_AVATAR = str(ASSET_DIR / "patient-avatar.svg")
+DOCTOR_CHAT_AVATAR = str(ASSET_DIR / "doctor-avatar.svg")
 VESPH_CHAT_AVATAR = str(ASSET_DIR / "vesph-avatar.svg")
 
 
@@ -135,16 +158,17 @@ h1, h2, h3 { font-family: "Manrope", sans-serif !important; letter-spacing: -.02
 .detail-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; margin:5px 0 10px; }
 .detail-cell { background:#F5F8F7; border-radius:9px; padding:8px; font-size:10px; color:#425B58; }
 .detail-cell strong { display:block; color:var(--ink); margin-bottom:2px; }
-.st-key-suggestion_row .stButton > button { min-height:23px; padding:1px 3px; }
-.st-key-suggestion_row .stButton > button > div { width:100%; justify-content:center !important; }
-.st-key-suggestion_row [data-testid="stMarkdownContainer"] {
+.st-key-suggestion_row .stButton > button, .st-key-doc_suggestion_row .stButton > button { min-height:23px; padding:1px 3px; }
+.st-key-suggestion_row .stButton > button > div, .st-key-doc_suggestion_row .stButton > button > div { width:100%; justify-content:center !important; }
+.st-key-suggestion_row [data-testid="stMarkdownContainer"], .st-key-doc_suggestion_row [data-testid="stMarkdownContainer"] {
   height:100%; display:flex; align-items:center; justify-content:center;
   line-height:1 !important;
 }
-.st-key-suggestion_row .stButton p {
+.st-key-suggestion_row .stButton p, .st-key-doc_suggestion_row .stButton p {
   display:block !important; width:100%; margin:0; font-size:8px !important; line-height:1 !important;
   text-align:center !important; white-space:nowrap;
 }
+
 [data-testid="stBaseButton-tertiary"] {
   min-height:58px !important; justify-content:flex-start !important; text-align:left !important;
   background:#FFFFFF !important; border:1px solid var(--line) !important;
@@ -193,23 +217,29 @@ div[data-testid="stMetricValue"] { font-size:16px; }
   [data-testid="stColumn"]:has(.left-panel-marker),
   [data-testid="stColumn"]:has(.right-panel-marker) { overflow:hidden; }
   [data-testid="stColumn"]:has(.right-panel-marker) { position:relative; }
-  .stApp .st-key-chat_history {
+  .stApp .st-key-chat_history,
+  .stApp .st-key-doctor_chat_history {
     height:calc(100vh - 19.1rem) !important;
     min-height:calc(100vh - 19.1rem) !important;
     max-height:calc(100vh - 19.1rem) !important;
     overflow-y:auto;
     padding-bottom:8px;
   }
-  .st-key-chat_dock {
+  .st-key-chat_dock,
+  .st-key-doctor_chat_dock {
     position:absolute;
     left:0;
     right:0;
     bottom:76px;
     gap:6px !important;
   }
-  .st-key-chat_dock [data-testid="stVerticalBlock"] { gap:6px !important; }
-  .st-key-chat_dock [data-testid="stForm"] { margin:0 !important; padding:0 !important; }
-  .st-key-chat_dock .safety-note { margin-top:0; }
+  .st-key-chat_dock [data-testid="stVerticalBlock"],
+  .st-key-doctor_chat_dock [data-testid="stVerticalBlock"] { gap:6px !important; }
+  .st-key-chat_dock [data-testid="stForm"],
+  .st-key-doctor_chat_dock [data-testid="stForm"] { margin:0 !important; padding:0 !important; }
+  .st-key-chat_dock .safety-note,
+  .st-key-doctor_chat_dock .safety-note { margin-top:0; }
+
   [data-testid="stColumn"]:has(.middle-panel-marker) {
     overflow-y:hidden;
     overflow-x:hidden;
@@ -223,10 +253,101 @@ div[data-testid="stMetricValue"] { font-size:16px; }
     padding-right:4px;
   }
   .footer-note { display:none; }
+/* Doctor Portal & Meal Medication Styles */
+.portal-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 8px 14px;
+  margin-bottom: 10px;
+  box-shadow: 0 4px 12px rgba(23,53,50,.04);
 }
-
-@media (max-width: 900px) {
-  .block-container { padding:.75rem; }
+.doctor-header-card {
+  background: linear-gradient(145deg, #1A3636 0%, #075651 100%);
+  color: white;
+  border-radius: 16px;
+  padding: 14px;
+  box-shadow: 0 8px 24px rgba(7,86,81,.18);
+  margin-bottom: 10px;
+}
+.doctor-avatar {
+  width: 44px; height: 44px; border-radius: 50%;
+  background: rgba(255,255,255,.18); border: 2px solid rgba(255,255,255,.3);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 16px; color: white;
+}
+.agenda-card {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  box-shadow: 0 2px 8px rgba(23,53,50,.03);
+  transition: all .15s ease;
+}
+.agenda-card:hover {
+  border-color: #9ABCB7;
+  box-shadow: 0 4px 14px rgba(23,53,50,.07);
+}
+.agenda-time {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: #EBF4F2;
+  color: #0B6E69;
+}
+.rebook-notice {
+  background: #FFF4E5;
+  border-left: 3px solid #FF9800;
+  color: #8C4B00;
+  padding: 7px 10px;
+  border-radius: 0 8px 8px 0;
+  font-size: 10px;
+  margin-top: 8px;
+  line-height: 1.4;
+}
+.meal-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 11px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  margin: 10px 0 6px;
+}
+.meal-breakfast { background: #FFF7EB; color: #B25E00; border-left: 3px solid #FFA726; }
+.meal-lunch { background: #EDF7F5; color: #075651; border-left: 3px solid #0B6E69; }
+.meal-dinner { background: #EFF2FA; color: #283593; border-left: 3px solid #3F51B5; }
+.meal-other { background: #F5F5F5; color: #424242; border-left: 3px solid #9E9E9E; }
+.med-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 9px 12px;
+  margin-bottom: 6px;
+}
+.chart-section {
+  background: #F8FAF9;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+.chart-title {
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--teal-dark);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
 }
 </style>
 """
@@ -234,25 +355,14 @@ div[data-testid="stMetricValue"] { font-size:16px; }
 st.markdown(CSS, unsafe_allow_html=True)
 
 
-def initialize_state() -> None:
-    if "care_data" not in st.session_state:
-        st.session_state.care_data = load_demo_data()
-    if "messages" not in st.session_state:
-        st.session_state.messages = [
-            {
-                "role": "assistant",
-                "content": "Hi Ananya — I have your recent hospital record ready. I can help with your recovery summary, appointments, reports, or medicines.",
-                "agent": "Patient Summary Agent",
-            }
-        ]
-    if "taken_medications" not in st.session_state:
-        st.session_state.taken_medications = set()
-    if "discharge_uploads" not in st.session_state:
-        st.session_state.discharge_uploads = []
+@st.cache_resource
+def get_integrations() -> IntegrationHub:
+    """Create server-only clients from Streamlit secrets or local env vars."""
+
+    return IntegrationHub(IntegrationSettings.from_sources(st.secrets))
 
 
-initialize_state()
-DATA = st.session_state.care_data
+INTEGRATIONS = get_integrations()
 
 
 @st.cache_resource
@@ -265,14 +375,106 @@ def get_orchestrator():
 ORCHESTRATOR = get_orchestrator()
 
 
-@st.cache_resource
-def get_integrations() -> IntegrationHub:
-    """Create server-only clients from Streamlit secrets or local env vars."""
+def get_all_patients() -> list[dict]:
+    try:
+        return fetch_all_patients(INTEGRATIONS.supabase_client())
+    except Exception:
+        return []
 
-    return IntegrationHub(IntegrationSettings.from_sources(st.secrets))
+
+def get_all_doctors() -> list[dict]:
+    try:
+        return fetch_all_doctors(INTEGRATIONS.supabase_client())
+    except Exception:
+        return []
 
 
-INTEGRATIONS = get_integrations()
+def initialize_state() -> None:
+    if "portal_mode" not in st.session_state:
+        st.session_state.portal_mode = "patient"
+    if "active_patient_id" not in st.session_state:
+        st.session_state.active_patient_id = "22222222-2222-2222-2222-222222222222"
+    if "active_doctor_id" not in st.session_state:
+        st.session_state.active_doctor_id = "11111111-1111-1111-1111-111111111111"
+
+    if (
+        "care_data" not in st.session_state
+        or st.session_state.get("_loaded_patient_id") != st.session_state.active_patient_id
+    ):
+        try:
+            client = INTEGRATIONS.supabase_client()
+            st.session_state.care_data = fetch_patient_snapshot(
+                client, st.session_state.active_patient_id
+            )
+            st.session_state._loaded_patient_id = st.session_state.active_patient_id
+        except Exception as exc:
+            st.error(f"Error connecting to Supabase: {exc}")
+            raise exc
+
+    if (
+        "messages" not in st.session_state
+        or st.session_state.get("_chat_patient_id") != st.session_state.active_patient_id
+    ):
+        p_name = st.session_state.care_data.get("patient", {}).get("first_name", "there")
+        meds = st.session_state.care_data.get("medications", [])
+        breakfast_meds = [m["name"] for m in meds if m.get("meal_timing") == "breakfast"]
+        lunch_meds = [m["name"] for m in meds if m.get("meal_timing") == "lunch"]
+
+        intro_content = (
+            f"Hi {p_name} — I have your live hospital record ready from Supabase. "
+            "I can help with your recovery summary, appointments, reports, or medicines."
+        )
+        if breakfast_meds or lunch_meds:
+            active_med = breakfast_meds[0] if breakfast_meds else lunch_meds[0]
+            intro_content += (
+                f"\n\n💊 **Mealtime Medication Check**: Did you take your **{active_med}** with your meal? "
+                "You can tap the checkmark in the Medication tab or let me know right here!"
+            )
+
+        st.session_state.messages = [
+            {
+                "role": "assistant",
+                "content": intro_content,
+                "agent": "Patient Summary Agent · Med Reminder",
+            }
+        ]
+        st.session_state._chat_patient_id = st.session_state.active_patient_id
+
+    if "taken_medications" not in st.session_state:
+        st.session_state.taken_medications = set()
+    if "discharge_uploads" not in st.session_state:
+        st.session_state.discharge_uploads = []
+    if "doctor_messages" not in st.session_state:
+        st.session_state.doctor_messages = [
+            {
+                "role": "assistant",
+                "content": (
+                    "**Doctor Clinical Assistant Active**\n\n"
+                    "Upload a doctor's consultation note or prescription PDF, or click **Ingest Sample Note** below. "
+                    "The agent will extract clinical findings and automatically update the patient's summary, "
+                    "schedule follow-up appointments, add prescriptions to meal timings, and order diagnostics directly in Supabase."
+                ),
+                "agent": "Clinical Ingestion Agent",
+            }
+        ]
+
+
+
+initialize_state()
+DATA = st.session_state.care_data
+
+
+def get_last_updated_str() -> str:
+    """Retrieve timestamp of the latest field edit or appointment upload."""
+    if "last_updated_time" not in st.session_state:
+        st.session_state.last_updated_time = "18 Oct 2026 · 8:40 PM"
+    return st.session_state.last_updated_time
+
+
+def record_activity_update(action: str = "Last edit") -> None:
+    """Update system timestamp whenever an appointment is added/rescheduled or a field is modified."""
+    now = datetime.now()
+    st.session_state.last_updated_time = now.strftime("%d %b %Y · %I:%M %p")
 
 
 def panel_header(eyebrow: str, title: str, copy: str = "") -> None:
@@ -316,6 +518,7 @@ def add_chat_message(prompt: str) -> None:
         patient_id,
         recent_messages=st.session_state.messages[:-1],
         thread_id=patient_id,
+        persona="patient",
     )
     st.session_state.messages.append(
         {
@@ -326,6 +529,142 @@ def add_chat_message(prompt: str) -> None:
             "escalation": reply.escalation,
         }
     )
+
+
+def format_ingestion_report(res: dict[str, Any], doc_title: str) -> str:
+    """Format a comprehensive, structured clinical sync report for doctor chat."""
+    md = [
+        "### 📑 Consultation Ingested & Database Synchronized",
+        f"**Source Document:** {doc_title}  ",
+        f"**Target Patient:** {escape(str(res['patient_name']))} (`...{str(res['patient_id'])[-4:]}`)  ",
+        f"**Primary Diagnosis:** {escape(str(res['diagnosis']))}  ",
+        "",
+        "#### 🔄 Live Supabase Updates Applied:",
+        f"- ✅ **Patient Summary Field Updated:** \"{escape(str(res['new_summary']))}\"",
+        f"- ✅ **New Consultation Record Logged:** ID `{str(res['consultation_id'])[:8]}...`",
+    ]
+    if res.get("appointments_created"):
+        md.append(f"- ✅ **Follow-up Appointments Scheduled ({len(res['appointments_created'])}):**")
+        for a in res["appointments_created"]:
+            md.append(f"  - 📅 **{a['date']} at {a['time']}** ({a['type']}) · {escape(str(a['summary']))}")
+    if res.get("medications_added"):
+        md.append(f"- ✅ **Prescriptions Scheduled by Mealtime ({len(res['medications_added'])}):**")
+        for m in res["medications_added"]:
+            meal_icon = "🍳" if m["meal_timing"] == "breakfast" else ("🥗" if m["meal_timing"] == "lunch" else "🍲")
+            md.append(f"  - {meal_icon} **{m['meal_timing'].title()}:** {escape(str(m['name']))} {escape(str(m['dosage']))} · {escape(str(m['instructions']))} ({m['duration_days']} days)")
+    if res.get("diagnostics_ordered"):
+        md.append(f"- ✅ **Diagnostics Ordered ({len(res['diagnostics_ordered'])}):**")
+        for d in res["diagnostics_ordered"]:
+            md.append(f"  - 🔬 **{escape(str(d['name']))}** ({escape(str(d['category']))}) · {escape(str(d.get('summary', '')))}")
+
+    md.append("")
+    md.append("> 💡 *Switch to **👤 Patient View** above to inspect Ananya's live updated summary, newly scheduled mealtime medications, and confirmed follow-up visit.*")
+    return "\n".join(md)
+
+
+def handle_consultation_pdf_ingestion(pdf_bytes: bytes, file_name: str = "Uploaded Consultation Note") -> None:
+    """Process consultation PDF bytes, extract clinical text, parse, and sync to Supabase."""
+    client = INTEGRATIONS.supabase_client()
+    text = extract_text_from_pdf(pdf_bytes)
+    groq_c = INTEGRATIONS._groq_client() if INTEGRATIONS.groq_configured else None
+    parsed = parse_consultation_text(text, groq_client=groq_c)
+    res = ingest_consultation_to_supabase(
+        client,
+        parsed,
+        doctor_id=st.session_state.active_doctor_id,
+        default_patient_id=st.session_state.active_patient_id,
+    )
+    report_md = format_ingestion_report(res, file_name)
+    st.session_state.doctor_messages.append({
+        "role": "user",
+        "content": f"Ingest consultation document: **{file_name}**",
+    })
+    st.session_state.doctor_messages.append({
+        "role": "assistant",
+        "content": report_md,
+        "agent": "Clinical Ingestion & RAG Agent",
+    })
+    st.session_state._patient_data_id = None
+    st.session_state._doctor_data_id = None
+    st.session_state._loaded_patient_id = None
+    record_activity_update("Consultation PDF ingested and synced to database")
+    st.session_state["doctor_toast"] = ("Consultation note ingested and synced to Supabase!", "✅")
+
+
+def add_doctor_chat_message(prompt: str, doc_snapshot: dict[str, Any]) -> None:
+    """Process doctor queries or raw consultation notes in the doctor panel."""
+    st.session_state.doctor_messages.append({"role": "user", "content": prompt})
+    lowered = prompt.lower()
+    clinical_keywords = ["diagnosis", "consultation", "patient:", "vitals", "rx:", "prescribe", "follow-up", "bp:"]
+    matched_count = sum(1 for kw in clinical_keywords if kw in lowered)
+
+    if matched_count >= 2 or ("patient" in lowered and ("rx" in lowered or "prescribe" in lowered or "follow-up" in lowered)):
+        client = INTEGRATIONS.supabase_client()
+        groq_c = INTEGRATIONS._groq_client() if INTEGRATIONS.groq_configured else None
+        parsed = parse_consultation_text(prompt, groq_client=groq_c)
+        res = ingest_consultation_to_supabase(
+            client,
+            parsed,
+            doctor_id=st.session_state.active_doctor_id,
+            default_patient_id=st.session_state.active_patient_id,
+        )
+        report_md = format_ingestion_report(res, "Clinical Consultation Note")
+        st.session_state.doctor_messages.append({
+            "role": "assistant",
+            "content": report_md,
+            "agent": "Clinical Ingestion & RAG Agent",
+        })
+        st.session_state._patient_data_id = None
+        st.session_state._doctor_data_id = None
+        st.session_state._loaded_patient_id = None
+        record_activity_update("Consultation note ingested and synced to database")
+        st.session_state["doctor_toast"] = ("Consultation note ingested and synced to Supabase!", "✅")
+        return
+
+    if is_connection_query(prompt):
+        st.session_state.doctor_messages.append({
+            "role": "assistant",
+            "content": INTEGRATIONS.status_message(),
+            "agent": "System · Connection check",
+        })
+        return
+
+    doc_care_data = {
+        "doctor": doc_snapshot.get("doctor", {}),
+        "appointments": doc_snapshot.get("today_appointments", []) + doc_snapshot.get("week_appointments", []),
+        "stats": doc_snapshot.get("stats", {}),
+        "unavailability": doc_snapshot.get("unavailability", []),
+        "patient": DATA.get("patient", {}),
+        "medications": DATA.get("medications", []),
+        "diagnostics": DATA.get("diagnostics", []),
+        "discharge": DATA.get("discharge", {}),
+    }
+
+    reply = INTEGRATIONS.answer_with_groq(
+        prompt,
+        doc_care_data,
+        recent_messages=st.session_state.doctor_messages[:-1],
+        persona="doctor",
+    )
+    if not reply:
+        doc_name = doc_snapshot.get("doctor", {}).get("name", "Dr. Rhea Mehta")
+        today_cnt = len(doc_snapshot.get("today_appointments", []))
+        week_cnt = len(doc_snapshot.get("week_appointments", []))
+        reply = (
+            f"**Clinical Status Overview for {escape(doc_name)}:**\n\n"
+            f"• **Today's OPD Consultations:** {today_cnt} patients scheduled\n"
+            f"• **Weekly Workload:** {week_cnt} appointments on agenda (18–24 Oct 2026)\n"
+            f"• **Primary Inpatient/Follow-up:** Ananya Iyer (Day 8 Post-laparoscopic appendectomy)\n\n"
+            "To ingest a consultation note and auto-sync updates (summary, follow-up, medications, diagnostics), "
+            "upload a PDF or click **📑 Ingest Sample Note** below."
+        )
+
+    st.session_state.doctor_messages.append({
+        "role": "assistant",
+        "content": reply,
+        "agent": f"Groq Clinical Assistant · {INTEGRATIONS.settings.groq_model}" if INTEGRATIONS.groq_configured else "Clinical Assistant",
+    })
+
 
 
 def confirm_escalation_resolution(message_index: int, resolution: str) -> None:
@@ -363,33 +702,106 @@ def confirm_escalation_resolution(message_index: int, resolution: str) -> None:
     )
 
 
-@st.dialog("Choose a new appointment time")
-def reschedule_dialog() -> None:
-    st.caption("Available General Surgery times for this patient")
-    options = DATA["appointment_schedule"][:3]
-    labels = [f"{row['date']} · {row['doctor']}" for row in options]
-    selected_label = st.selectbox("Date and doctor", labels)
+@st.dialog("Reschedule appointment")
+def reschedule_dialog(appointment_index: int = 0) -> None:
+    appointment = DATA["appointments"][appointment_index] if DATA["appointments"] else None
+    if not appointment:
+        st.warning("No appointment found to reschedule.")
+        return
+
+    st.markdown(
+        f"**Current:** {appointment['type']} with **{appointment['doctor']}**  \n"
+        f"📅 {appointment['date']} · 🕒 {appointment['time']}"
+    )
+    st.info("⚡ Available timeslots are auto-accepted and confirmed immediately without waiting for hospital approval.")
+
+    target_doctor = appointment.get("doctor")
+    doc_options = [row for row in DATA["appointment_schedule"] if row["doctor"] == target_doctor]
+    options = doc_options if doc_options else DATA["appointment_schedule"]
+
+    labels = [f"{row['date']} · {row['doctor']} ({row.get('department', 'General Surgery')})" for row in options]
+    selected_label = st.selectbox("Choose date & doctor", labels)
     selected = options[labels.index(selected_label)]
-    time = st.selectbox("Preferred time", selected["slots"])
-    note = st.text_input("Anything the scheduling desk should know?", placeholder="Optional")
-    if st.button("Request this time", type="primary", use_container_width=True):
-        appointment = DATA["appointments"][0]
-        appointment.update(
-            {
-                "date": selected["date"],
-                "time": time,
-                "doctor": selected["doctor"],
-                "status": "Reschedule requested",
-                "request_note": note,
-            }
-        )
-        st.session_state.messages.append(
-            {
-                "role": "assistant",
-                "content": f"Your preferred time, {selected['date']} at {time}, has been sent to the scheduling desk. The existing appointment stays active until the hospital confirms the change.",
-                "agent": "Reminder Agent · Scheduling",
-            }
-        )
+
+    available_slots = selected.get("slots", [])
+    if not available_slots:
+        st.warning("No timeslots currently open for this date. Please choose another date.")
+        return
+
+    time = st.selectbox("Available timeslot", available_slots)
+    note = st.text_input("Anything the care team should know? (Optional)", placeholder="e.g. Prefer morning slot")
+
+    if st.button("Confirm & Reschedule", type="primary", use_container_width=True):
+        record_activity_update("Rescheduled appointment")
+        is_available = bool(time and time in available_slots)
+        if is_available:
+            appointment.update(
+                {
+                    "date": selected["date"],
+                    "time": time,
+                    "doctor": selected["doctor"],
+                    "status": "Confirmed",
+                    "request_note": note if note else None,
+                }
+            )
+            # Slot is consumed so it cannot be double-booked
+            if time in selected.get("slots", []):
+                selected["slots"].remove(time)
+
+            try:
+                update_appointment_in_supabase(
+                    INTEGRATIONS.supabase_client(),
+                    appointment["id"],
+                    "Confirmed",
+                    new_date=selected["date"],
+                    new_time=time,
+                )
+            except Exception:
+                pass
+
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": (
+                        f"Your appointment with {selected['doctor']} has been rescheduled and automatically confirmed "
+                        f"for {selected['date']} at {time}. No further hospital confirmation is needed."
+                    ),
+                    "agent": "Reminder Agent · Scheduling",
+                }
+            )
+            st.toast(f"Appointment rescheduled & confirmed for {selected['date']} at {time}!", icon="✅")
+        else:
+            appointment.update(
+                {
+                    "date": selected["date"],
+                    "time": time,
+                    "doctor": selected["doctor"],
+                    "status": "Reschedule requested",
+                    "request_note": note,
+                }
+            )
+            try:
+                update_appointment_in_supabase(
+                    INTEGRATIONS.supabase_client(),
+                    appointment["id"],
+                    "Rescheduled",
+                    new_date=selected["date"],
+                    new_time=time,
+                )
+            except Exception:
+                pass
+
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": (
+                        f"Your preferred time, {selected['date']} at {time}, has been sent to the scheduling desk. "
+                        "The existing appointment stays active until the hospital confirms the change."
+                    ),
+                    "agent": "Reminder Agent · Scheduling",
+                }
+            )
+
         st.rerun()
 
 
@@ -413,6 +825,7 @@ def add_item_dialog(default_action: str = "New appointment") -> None:
         slot = st.selectbox("Available time", selected["slots"])
         reason = st.text_input("Reason for visit", placeholder="Briefly describe what you need")
         if st.button("Send booking request", type="primary", use_container_width=True):
+            record_activity_update("New appointment request")
             DATA["appointments"].insert(
                 0,
                 {
@@ -440,11 +853,12 @@ def add_item_dialog(default_action: str = "New appointment") -> None:
         uploaded = st.file_uploader("Choose a PDF or image", type=["pdf", "png", "jpg", "jpeg"])
         note = st.text_input("Note for the care team", placeholder="Optional")
         if st.button("Add report", type="primary", use_container_width=True, disabled=uploaded is None):
+            record_activity_update("Diagnostic report upload")
             DATA["diagnostics"].insert(
                 0,
                 {
                     "id": f"UPL-{len(DATA['diagnostics']) + 1}",
-                    "date": "19 Sep 2026",
+                    "date": "18 Oct 2026",
                     "name": uploaded.name if uploaded else "Uploaded report",
                     "category": report_type,
                     "ordered_by": "Patient upload",
@@ -459,6 +873,7 @@ def add_item_dialog(default_action: str = "New appointment") -> None:
         instruction = st.text_input("Instructions", placeholder="e.g. Once weekly after food")
         duration = st.text_input("Duration", placeholder="e.g. 6 weeks")
         if st.button("Add medication", type="primary", use_container_width=True, disabled=not name.strip()):
+            record_activity_update("Medication added")
             DATA["medications"].insert(
                 0,
                 {
@@ -474,11 +889,12 @@ def add_item_dialog(default_action: str = "New appointment") -> None:
         uploaded = st.file_uploader("Choose a discharge PDF or image", type=["pdf", "png", "jpg", "jpeg"])
         note = st.text_input("Document note", placeholder="Optional")
         if st.button("Add discharge document", type="primary", use_container_width=True, disabled=uploaded is None):
+            record_activity_update("Discharge document upload")
             st.session_state.discharge_uploads.insert(
                 0,
                 {
                     "name": uploaded.name if uploaded else "Discharge document",
-                    "date": "19 Sep 2026",
+                    "date": "18 Oct 2026",
                     "note": note.strip() or "Patient-uploaded discharge document.",
                 },
             )
@@ -565,15 +981,27 @@ def record_detail_dialog(record_type: str, record: dict) -> None:
         st.write(record["note"])
         filename = "discharge-upload.txt"
 
-    download_data = "\n".join(f"{key}: {value}" for key, value in record.items())
-    st.download_button(
-        "Download record",
-        data=download_data,
-        file_name=filename,
-        mime="text/plain",
-        icon=":material/download:",
-        use_container_width=True,
-    )
+    pdf_filename = filename.rsplit(".", 1)[0] + ".pdf"
+    try:
+        pdf_data = generate_record_pdf(record, record_type, DATA["patient"]["name"])
+        st.download_button(
+            "Download PDF",
+            data=pdf_data,
+            file_name=pdf_filename,
+            mime="application/pdf",
+            icon=":material/download:",
+            use_container_width=True,
+        )
+    except Exception:
+        download_data = "\n".join(f"{key}: {value}" for key, value in record.items())
+        st.download_button(
+            "Download record",
+            data=download_data,
+            file_name=filename,
+            mime="text/plain",
+            icon=":material/download:",
+            use_container_width=True,
+        )
 
 
 def record_card(
@@ -596,341 +1024,1017 @@ def record_card(
         record_detail_dialog(record_type, record)
 
 
-patient = DATA["patient"]
-left, middle, right = st.columns([1, 1.8, 0.92], gap="medium")
+@st.dialog("Mark Doctor Unavailability / Block Schedule")
+def doctor_unavailability_dialog(doctor_id: str, doctor_name: str) -> None:
+    st.markdown(f"**Doctor:** {doctor_name}")
+    st.caption("Blocking a day or timeslot marks you unavailable to patients and automatically reschedules conflicting patient appointments to your next available slot.")
+
+    date_options = ["2026-10-18", "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23", "2026-10-24", "2026-10-25"]
+    col_d, col_s = st.columns(2)
+    with col_d:
+        block_date = st.selectbox("Date to block", date_options)
+    with col_s:
+        block_scope = st.radio("Block duration", ["Full Day", "Specific Timeslot"], horizontal=True)
+
+    blocked_slot = None
+    if block_scope == "Specific Timeslot":
+        blocked_slot = st.selectbox("Select timeslot", ["09:00 AM", "10:30 AM", "11:30 AM", "02:00 PM", "03:00 PM", "04:30 PM"])
+
+    reason = st.text_input("Reason for unavailability", placeholder="e.g. Emergency Laparotomy in OT / Medical Symposium")
+
+    st.info("ℹ️ Existing appointments on this date/slot will receive an automated notice and be auto-rebooked to the next open OPD slot.")
+
+    if st.button("⛔ Confirm Unavailability Block", type="primary", use_container_width=True):
+        if not reason.strip():
+            reason = "Doctor unavailable / Urgent duty"
+        client = INTEGRATIONS.supabase_client()
+        with st.spinner("Blocking slot and checking conflicting appointments..."):
+            record_activity_update("Doctor availability blocked")
+            rebooked = block_doctor_slot_in_supabase(
+                client=client,
+                doctor_id=doctor_id,
+                blocked_date=block_date,
+                blocked_slot=blocked_slot if block_scope == "Specific Timeslot" else None,
+                reason=reason.strip(),
+            )
+            st.session_state._doctor_data_id = None
+            if rebooked:
+                msg = f"Slot blocked! {len(rebooked)} conflicting patient appointment(s) were auto-rebooked to open fallback slots."
+                st.session_state["doctor_toast"] = (msg, "⚠️")
+            else:
+                st.session_state["doctor_toast"] = ("Schedule blocked successfully. No patient conflicts found.", "✅")
+            st.rerun()
 
 
-with left:
-    st.markdown('<span class="left-panel-marker"></span>', unsafe_allow_html=True)
-    st.markdown(
-        """
-        <div class="brand-panel">
-          <div class="brand-lockup">
-            <div class="brand-mark">✚</div>
-            <div><div class="brand-name">VESPH Care</div><div class="brand-sub">Virtual Engagement System for Patient Health</div></div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    panel_header("Patient overview", "", "Updated 19 Sep 2026 · 8:40 PM")
+@st.dialog("Schedule Patient Appointment")
+def doctor_book_appointment_dialog(doctor_id: str, default_patient_id: str | None = None) -> None:
+    patients = get_all_patients()
+    patient_choice = st.radio("Patient Type", ["Existing Patient", "New Patient"], horizontal=True)
+
+    target_patient_id = None
+    new_patient_info = {}
+
+    if patient_choice == "Existing Patient":
+        patient_options = {p["id"]: f"{p['name']} ({p.get('gender', '')}, {p.get('age', '')}y) · {p.get('phone', '')}" for p in patients}
+        default_index = 0
+        if default_patient_id and default_patient_id in patient_options:
+            default_index = list(patient_options.keys()).index(default_patient_id)
+        selected_pid = st.selectbox("Select Patient", list(patient_options.keys()), format_func=lambda pid: patient_options[pid], index=default_index)
+        target_patient_id = selected_pid
+    else:
+        c1, c2 = st.columns(2)
+        with c1:
+            first_name = st.text_input("First Name", placeholder="e.g. Meera")
+            age = st.number_input("Age", min_value=1, max_value=120, value=30)
+            phone = st.text_input("Phone", placeholder="+91 98200 12345")
+        with c2:
+            last_name = st.text_input("Last Name", placeholder="e.g. Joshi")
+            gender = st.selectbox("Gender", ["Female", "Male", "Other"])
+            email = st.text_input("Email", placeholder="meera.joshi@example.com")
+        medical_summary = st.text_area("Initial Clinical Notes / Medical History", placeholder="Brief health notes or history", height=68)
+        new_patient_info = {
+            "first_name": first_name.strip(),
+            "last_name": last_name.strip(),
+            "age": age,
+            "gender": gender,
+            "phone": phone.strip(),
+            "email": email.strip(),
+            "medical_summary": medical_summary.strip(),
+        }
+
+    c_date, c_time = st.columns(2)
+    with c_date:
+        appt_date = st.selectbox("Appointment Date", ["2026-10-18", "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23", "2026-10-24"])
+    with c_time:
+        client = INTEGRATIONS.supabase_client()
+        available_cadence_slots = generate_available_slots(client, doctor_id, appt_date)
+        if not available_cadence_slots:
+            available_cadence_slots = ["09:00 AM", "09:20 AM", "10:00 AM", "11:20 AM", "02:00 PM", "03:20 PM", "04:00 PM"]
+        appt_slot = st.selectbox("Timeslot (15m + 5m buffer)", available_cadence_slots)
+
+    c_type, c_loc = st.columns(2)
+    with c_type:
+        appt_type = st.selectbox("Type", ["Consultation", "FollowUp", "Diagnostic"])
+    with c_loc:
+        location = st.text_input("Location", value="OPD Wing B, Room 304")
+
+    summary_note = st.text_input("Visit Summary / Clinical Objective", placeholder="e.g. Post-operative wound assessment and stitch review")
+
+    if st.button("Confirm Appointment Booking", type="primary", use_container_width=True):
+        client = INTEGRATIONS.supabase_client()
+        with st.spinner("Booking appointment in Supabase..."):
+            record_activity_update("Doctor appointment booking")
+            if patient_choice == "Existing Patient":
+                book_appointment_by_doctor(
+                    client=client,
+                    doctor_id=doctor_id,
+                    patient_id=target_patient_id,
+                    appt_date=appt_date,
+                    appt_slot=appt_slot,
+                    appt_type=appt_type,
+                    location=location,
+                    summary=summary_note.strip() or f"{appt_type} scheduled by doctor",
+                )
+            else:
+                if not new_patient_info["first_name"]:
+                    st.error("Please enter the patient's first name.")
+                    return
+                register_patient_and_book(
+                    client=client,
+                    doctor_id=doctor_id,
+                    first_name=new_patient_info["first_name"],
+                    last_name=new_patient_info["last_name"] or "Patient",
+                    age=new_patient_info["age"],
+                    gender=new_patient_info["gender"],
+                    phone=new_patient_info["phone"] or "+91 98000 00000",
+                    email=new_patient_info["email"] or "patient@vesphcare.com",
+                    appt_date=appt_date,
+                    appt_slot=appt_slot,
+                    appt_type=appt_type,
+                    location=location,
+                    summary=summary_note.strip() or "Initial consultation scheduled by doctor",
+                    medical_summary=new_patient_info["medical_summary"] or "No known chronic conditions.",
+                )
+            st.session_state._doctor_data_id = None
+            st.session_state["doctor_toast"] = (f"Appointment booked for {appt_date} at {appt_slot}!", "✅")
+            st.rerun()
+
+
+@st.dialog("Patient Clinical Chart", width="large")
+def patient_clinical_chart_dialog(patient_id: str) -> None:
+    client = INTEGRATIONS.supabase_client()
+    try:
+        p_snap = fetch_patient_snapshot(client, patient_id)
+    except Exception as exc:
+        st.error(f"Error loading patient data: {exc}")
+        return
+
+    p = p_snap["patient"]
+    st.subheader(f"🩺 {p['name']} · Clinical Profile")
+    st.caption(f"Patient ID: {p['id']} · Age: {p['age']}y · Sex: {p['gender']} · Blood: {p['blood_group']} · Phone: {p['phone']}")
+
+    # Health & Vitals
+    v1, v2, v3, v4 = st.columns(4)
+    v1.metric("BP Systolic", f"{p.get('vitals', {}).get('systolic', 120)} mmHg")
+    v2.metric("BP Diastolic", f"{p.get('vitals', {}).get('diastolic', 80)} mmHg")
+    v3.metric("Blood Sugar", f"{p.get('vitals', {}).get('sugar', 95)} mg/dL")
+    v4.metric("BMI", f"{p.get('vitals', {}).get('bmi', 21.5)} kg/m²")
+
     st.markdown(
         f"""
-        <div class="patient-card">
-          <div class="patient-head">
-            <div class="avatar">{escape(patient['initials'])}</div>
-            <div><div class="patient-name">{escape(patient['name'])}</div><div class="patient-id">Patient ID · {escape(patient['id'])}</div></div>
-          </div>
-          <div class="patient-grid">
-            <div class="patient-stat compact"><span>Age</span><strong>{patient['age']} yrs</strong></div>
-            <div class="patient-stat compact"><span>Blood</span><strong>{escape(patient['blood_group'])}</strong></div>
-            <div class="patient-stat compact"><span>Sex</span><strong>{escape(patient['gender'])}</strong></div>
-            <div class="patient-stat wide"><span>Primary doctor</span><strong>{escape(patient['primary_doctor'].replace('Dr. ', 'Dr. '))}</strong></div>
-            <div class="patient-stat wide patient-contact"><span>Contact</span><strong>{escape(patient['phone'])}<br>{escape(patient['email'])}</strong></div>
-          </div>
+        <div class="chart-section">
+          <div class="chart-title">Clinical & Diagnosis Summary</div>
+          <div style="font-size:12px; color:var(--ink); line-height:1.45;">{escape(p.get('health_summary', 'Normal recovery'))}</div>
+          <div style="margin-top:6px; font-size:11px; color:var(--muted);"><strong>Known Allergies:</strong> {escape(', '.join(p.get('allergies', ['None'])))}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    st.markdown(
-        f"""
-        <div class="summary-note">
-          <div class="summary-label"><span class="summary-icon">♡</span> Health summary</div>
-          <div class="summary-copy">{escape(clipped(patient['health_summary'], 190))}</div>
-          <div class="micro-list">
-            <span class="micro-pill">Allergy · {escape(patient['allergies'][0])}</span>
-            <span class="micro-pill">Mild asthma</span>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    tab_meds, tab_labs, tab_surg = st.tabs(["Active Medications & Meal Timing", "Diagnostic Lab Results", "Surgical & Hospital History"])
 
-    for icon, label, summary in [
-        ("⌁", "Diagnostic summary", patient["diagnostic_summary"]),
-        ("◌", "Medication summary", patient["medication_summary"]),
-        ("◷", "Appointment summary", patient["appointment_summary"]),
-    ]:
+    with tab_meds:
+        meds = p_snap.get("medications", [])
+        if not meds:
+            st.caption("No active medications prescribed.")
+        else:
+            for m in meds:
+                meal_tag = m.get("meal_timing", "general").capitalize()
+                taken_str = "✓ Taken" if m.get("is_taken") else "○ Pending"
+                st.markdown(
+                    f"""
+                    <div class="med-row">
+                      <div>
+                        <strong style="font-size:12px; color:var(--ink);">{escape(m['name'])}</strong>
+                        <div style="font-size:10px; color:var(--muted);">{escape(m.get('instruction', ''))} · {escape(m.get('duration', ''))}</div>
+                      </div>
+                      <div style="text-align:right;">
+                        <span class="micro-pill" style="background:#EBF5F3; color:#0B6E69; font-weight:700;">{meal_tag}</span>
+                        <span class="micro-pill" style="margin-left:4px;">{taken_str}</span>
+                      </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+    with tab_labs:
+        labs = p_snap.get("diagnostics", [])
+        if not labs:
+            st.caption("No diagnostic reports on record.")
+        else:
+            for lab in labs:
+                st.markdown(
+                    f"""
+                    <div style="background:white; border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:8px;">
+                      <div style="display:flex; justify-content:space-between;">
+                        <strong style="font-size:12px; color:var(--ink);">{escape(lab['name'])}</strong>
+                        <span class="status">{escape(lab.get('category', 'Lab'))}</span>
+                      </div>
+                      <div style="font-size:11px; color:#3F5D58; margin-top:4px;"><strong>Result:</strong> {escape(lab.get('result', lab.get('summary', '')))}</div>
+                      <div style="font-size:10px; color:var(--muted); margin-top:3px;">Reference: {escape(lab.get('reference_range', 'Normal'))} · Date: {escape(lab.get('date', ''))}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+    with tab_surg:
+        discharge = p_snap.get("discharge", {})
+        if discharge and discharge.get("procedure"):
+            st.markdown(
+                f"""
+                <div style="background:white; border:1px solid var(--line); border-radius:10px; padding:10px;">
+                  <strong style="font-size:12px; color:var(--ink);">{escape(discharge.get('procedure', 'Surgical procedure'))}</strong>
+                  <div style="font-size:11px; color:var(--muted); margin-top:3px;">Date: {escape(discharge.get('discharge_date', ''))} · Lead Consultant: {escape(discharge.get('consultant', ''))}</div>
+                  <div style="font-size:11px; color:#2E4744; margin-top:6px; line-height:1.4;">{escape(discharge.get('condition_at_discharge', ''))}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        else:
+            st.caption("No surgical procedure recorded for this patient.")
+
+    st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
+    if st.button("＋ Schedule New Appointment for this Patient", type="primary", use_container_width=True):
+        st.session_state["_book_default_patient_id"] = patient_id
+        st.rerun()
+
+
+def render_patient_portal() -> None:
+    patient = DATA["patient"]
+    left, middle, right = st.columns([1, 1.8, 0.92], gap="medium")
+
+    with left:
+        st.markdown('<span class="left-panel-marker"></span>', unsafe_allow_html=True)
+        st.markdown(
+            """
+            <div class="brand-panel">
+              <div class="brand-lockup">
+                <div class="brand-mark">✚</div>
+                <div><div class="brand-name">VESPH Care</div><div class="brand-sub">Virtual Engagement System for Patient Health</div></div>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        panel_header("Patient overview", "", f"Updated {get_last_updated_str()}")
+        st.markdown(
+            f"""
+            <div class="patient-card">
+              <div class="patient-head">
+                <div class="avatar">{escape(patient['initials'])}</div>
+                <div><div class="patient-name">{escape(patient['name'])}</div><div class="patient-id">Patient ID · {escape(patient['id'])}</div></div>
+              </div>
+              <div class="patient-grid">
+                <div class="patient-stat compact"><span>Age</span><strong>{patient['age']} yrs</strong></div>
+                <div class="patient-stat compact"><span>Blood</span><strong>{escape(patient['blood_group'])}</strong></div>
+                <div class="patient-stat compact"><span>Sex</span><strong>{escape(patient['gender'])}</strong></div>
+                <div class="patient-stat wide"><span>Primary doctor</span><strong>{escape(patient['primary_doctor'].replace('Dr. ', 'Dr. '))}</strong></div>
+                <div class="patient-stat wide patient-contact"><span>Contact</span><strong>{escape(patient['phone'])}<br>{escape(patient['email'])}</strong></div>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
         st.markdown(
             f"""
             <div class="summary-note">
-              <div class="summary-label"><span class="summary-icon">{icon}</span> {escape(label)}</div>
-              <div class="summary-copy">{escape(clipped(summary))}</div>
+              <div class="summary-label"><span class="summary-icon">♡</span> Health summary</div>
+              <div class="summary-copy">{escape(clipped(patient['health_summary'], 190))}</div>
+              <div class="micro-list">
+                <span class="micro-pill">Allergy · {escape(patient['allergies'][0])}</span>
+                <span class="micro-pill">Mild asthma</span>
+              </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-    st.markdown(
-        '<div class="safety-note">This view summarizes hospital records. It does not replace your doctor or provide a diagnosis.</div>',
-        unsafe_allow_html=True,
-    )
+        for icon, label, summary in [
+            ("⌁", "Diagnostic summary", patient["diagnostic_summary"]),
+            ("◌", "Medication summary", patient["medication_summary"]),
+            ("◷", "Appointment summary", patient["appointment_summary"]),
+        ]:
+            st.markdown(
+                f"""
+                <div class="summary-note">
+                  <div class="summary-label"><span class="summary-icon">{icon}</span> {escape(label)}</div>
+                  <div class="summary-copy">{escape(clipped(summary))}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        st.markdown(
+            '<div class="safety-note">This view summarizes hospital records. It does not replace your doctor or provide a diagnosis.</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
+        if st.button("↺ Reset Database & State", key="reset_db_btn", use_container_width=True, help="Reset Supabase database and session state back to canonical baseline"):
+            with st.spinner("Restoring Supabase database to baseline..."):
+                reset_supabase_database(INTEGRATIONS.supabase_client())
+                st.session_state.clear()
+                st.toast("Database and session reset to baseline!", icon="✅")
+                st.rerun()
+
+    with middle:
+        st.markdown('<span class="middle-panel-marker"></span>', unsafe_allow_html=True)
+        panel_header("Notification centre", "")
+        next_appointment = DATA["appointments"][0]
+        reminder_strip = st.container(
+            horizontal=True,
+            wrap=False,
+            horizontal_alignment="left",
+            gap="small",
+            key="reminder_carousel",
+        )
+        with reminder_strip.container(border=True, width=340):
+            is_confirmed = next_appointment.get("status") == "Confirmed"
+            kicker_text = "Appointment · Confirmed" if is_confirmed else "Appointment · Action needed"
+            st.markdown(
+                f"""
+                <div class="reminder-card primary">
+                  <div class="reminder-top"><div class="reminder-kicker">{kicker_text}</div><div class="reminder-time">In 2 days</div></div>
+                  <div class="reminder-title">{escape(next_appointment['type'])}</div>
+                  <div class="reminder-detail">{escape(next_appointment['doctor'])} · {escape(next_appointment['date'])}<br>{escape(next_appointment['time'])} · {escape(next_appointment['location'])}</div>
+                  <div class="reminder-meta">Reminder 1 of 2 · Bring latest CBC</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            action_a, action_b = st.columns(2, gap="small")
+            with action_a:
+                if is_confirmed:
+                    st.button("✓ Confirmed", key="confirm_reminder_done", disabled=True, use_container_width=True)
+                else:
+                    if st.button("Confirm", type="primary", key="confirm_reminder", use_container_width=True):
+                        next_appointment["status"] = "Confirmed"
+                        try:
+                            update_appointment_in_supabase(
+                                INTEGRATIONS.supabase_client(),
+                                next_appointment["id"],
+                                "Confirmed",
+                            )
+                        except Exception:
+                            pass
+                        st.session_state.messages.append(
+                            {
+                                "role": "assistant",
+                                "content": "Your surgical follow-up is confirmed. I’ll send the second reminder 24 hours before the appointment.",
+                                "agent": "Reminder Agent · Appointments",
+                            }
+                        )
+                        st.rerun()
+            with action_b:
+                if st.button("Reschedule", key="reschedule_reminder", use_container_width=True):
+                    reschedule_dialog()
+        with reminder_strip.container(border=True, width=340):
+            st.markdown(
+                """
+                <div class="reminder-card secondary">
+                  <div class="reminder-top"><div class="reminder-kicker">Diagnostic</div><div class="reminder-time">In 2 days</div></div>
+                  <div class="reminder-title">Complete Blood Count</div>
+                  <div class="reminder-detail">20 Oct · 9:00 AM<br>Ground floor · No fasting</div>
+                  <div class="reminder-meta">Reminder 1 of 2</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            if st.button("View booking", icon=":material/visibility:", key="view_cbc_reminder", use_container_width=True):
+                record_detail_dialog("diagnostic_booking", DATA["diagnostic_schedule"][0])
+        with reminder_strip.container(border=True, width=340):
+            st.markdown(
+                """
+                <div class="reminder-card secondary">
+                  <div class="reminder-top"><div class="reminder-kicker">Document</div><div class="reminder-time">Due 24 Oct</div></div>
+                  <div class="reminder-title">Insurance claim form</div>
+                  <div class="reminder-detail">Signed copy required<br>1 document pending</div>
+                  <div class="reminder-meta">Upload by 24 Oct · Reminder 1 of 2</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            if st.button("Upload", icon=":material/upload_file:", key="insurance_upload", use_container_width=True):
+                add_item_dialog("Discharge document")
+
+        # Proactive Meal Medication Check Card
+        meds_list = DATA.get("medications", [])
+        untaken_b = [m for m in meds_list if m.get("meal_timing") == "breakfast" and not m.get("is_taken")]
+        untaken_l = [m for m in meds_list if m.get("meal_timing") == "lunch" and not m.get("is_taken")]
+        untaken_d = [m for m in meds_list if m.get("meal_timing") == "dinner" and not m.get("is_taken")]
+
+        if untaken_b:
+            active_meal = "Breakfast"
+            active_meds = untaken_b
+        elif untaken_l:
+            active_meal = "Lunch"
+            active_meds = untaken_l
+        elif untaken_d:
+            active_meal = "Dinner"
+            active_meds = untaken_d
+        else:
+            active_meal = "Daily Routine"
+            active_meds = []
+
+        with reminder_strip.container(border=True, width=340):
+            med_names_str = ", ".join(m["name"] for m in active_meds) if active_meds else "All scheduled meds taken!"
+            st.markdown(
+                f"""
+                <div class="reminder-card secondary">
+                  <div class="reminder-top"><div class="reminder-kicker">Medication · {active_meal}</div><div class="reminder-time">Daily</div></div>
+                  <div class="reminder-title">{active_meal} Meds Check</div>
+                  <div class="reminder-detail">{escape(med_names_str)}<br>Take as instructed with meal</div>
+                  <div class="reminder-meta">Tap to mark taken or confirm in chat</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            if active_meds:
+                if st.button(f"✓ Mark {active_meal} Meds Taken", type="primary", key="quick_mark_meal_taken", use_container_width=True):
+                    record_activity_update("Meal medication taken")
+                    client = INTEGRATIONS.supabase_client()
+                    for m in active_meds:
+                        m["is_taken"] = True
+                        try:
+                            toggle_prescription_taken_in_supabase(client, m["id"], True)
+                        except Exception:
+                            pass
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": f"Confirmed! I've marked your {active_meal} medication ({med_names_str}) as taken. Great job maintaining your prescribed routine!",
+                        "agent": "Medication Agent",
+                    })
+                    st.toast(f"{active_meal} medications marked as taken!", icon="✅")
+                    st.rerun()
+            else:
+                st.button("✓ All Meal Meds Taken", disabled=True, key="all_meds_taken_btn", use_container_width=True)
+
+        appointments_tab, diagnostics_tab, medications_tab, discharge_tab = st.tabs(
+            ["Appointments", "Diagnostics", "Medication", "Discharge"]
+        )
+
+        with appointments_tab:
+            head_a, head_b = st.columns([1, 0.52])
+            with head_a:
+                st.caption("UPCOMING → PAST")
+            with head_b:
+                if st.button("＋ Add", key="new_appointment_tab", use_container_width=True):
+                    add_item_dialog("New appointment")
+
+            upcoming_appointments = [row for row in DATA["appointments"] if row["status"] != "Completed"]
+            past_appointments = [row for row in DATA["appointments"] if row["status"] == "Completed"]
+            for group_label, records in [("UPCOMING", upcoming_appointments), ("PAST", past_appointments)]:
+                st.markdown(f'<div class="timeline-label">{group_label}</div>', unsafe_allow_html=True)
+                for appointment in records:
+                    record_card(
+                        title=appointment["type"],
+                        meta=f"{appointment['date']} · {appointment['time']} · {appointment['doctor']} · {appointment['status']}",
+                        key=f"appointment_card_{appointment['id']}",
+                        record_type="appointment",
+                        record=appointment,
+                        icon=":material/calendar_month:",
+                    )
+
+        with diagnostics_tab:
+            head_a, head_b = st.columns([1, 0.52])
+            with head_a:
+                st.caption("UPCOMING → PAST")
+            with head_b:
+                if st.button("＋ Upload", key="add_report_tab", use_container_width=True):
+                    add_item_dialog("Diagnostic report")
+
+            st.markdown('<div class="timeline-label">UPCOMING</div>', unsafe_allow_html=True)
+            for scheduled in DATA["diagnostic_schedule"]:
+                if scheduled["status"] != "Booked":
+                    continue
+                record_card(
+                    title=scheduled["test"],
+                    meta=f"{scheduled['date']} · {scheduled['time']} · {scheduled['location']} · {scheduled['status']}",
+                    key=f"diagnostic_booking_card_{scheduled['id']}",
+                    record_type="diagnostic_booking",
+                    record=scheduled,
+                    icon=":material/science:",
+                )
+
+            st.markdown('<div class="timeline-label">PAST RESULTS</div>', unsafe_allow_html=True)
+            for report in DATA["diagnostics"]:
+                record_card(
+                    title=report["name"],
+                    meta=f"{report['date']} · {report['category']} · {report['status']}",
+                    key=f"diagnostic_result_card_{report['id']}",
+                    record_type="diagnostic_result",
+                    record=report,
+                    icon=":material/lab_profile:",
+                )
+
+        with medications_tab:
+            head_a, head_b = st.columns([1, 0.52])
+            with head_a:
+                st.caption("GROUPED BY MEALTIME: BREAKFAST · LUNCH · DINNER")
+            with head_b:
+                if st.button("＋ Add", key="add_medication_tab", use_container_width=True):
+                    add_item_dialog("Medication")
+
+            client = INTEGRATIONS.supabase_client()
+            meds = DATA.get("medications", [])
+
+            meal_groups = [
+                ("🍳 BREAKFAST (MORNING)", "breakfast", "meal-breakfast"),
+                ("🥗 LUNCH (AFTERNOON)", "lunch", "meal-lunch"),
+                ("🍲 DINNER (NIGHT)", "dinner", "meal-dinner"),
+                ("💊 AS NEEDED / GENERAL", "other", "meal-other"),
+            ]
+
+            for label, meal_key, css_class in meal_groups:
+                if meal_key == "other":
+                    group_meds = [m for m in meds if m.get("meal_timing") not in ("breakfast", "lunch", "dinner")]
+                else:
+                    group_meds = [m for m in meds if m.get("meal_timing") == meal_key]
+
+                if group_meds:
+                    st.markdown(f'<div class="meal-group-header {css_class}">{label}</div>', unsafe_allow_html=True)
+                    for index, medication in enumerate(group_meds):
+                        is_taken = medication.get("is_taken", False)
+                        col_info, col_btn = st.columns([3.2, 1.2], gap="small")
+                        with col_info:
+                            record_card(
+                                title=medication["name"],
+                                meta=f"{medication['instruction']} · {medication.get('duration', '')}",
+                                key=f"med_card_{meal_key}_{index}",
+                                record_type="medication",
+                                record=medication,
+                                icon=":material/medication:",
+                            )
+                        with col_btn:
+                            btn_label = "✓ Taken" if is_taken else "○ Mark taken"
+                            btn_type = "secondary" if is_taken else "primary"
+                            if st.button(btn_label, key=f"taken_btn_{medication.get('id', index)}_{meal_key}", type=btn_type, use_container_width=True):
+                                record_activity_update("Medication taken toggle")
+                                new_val = not is_taken
+                                medication["is_taken"] = new_val
+                                try:
+                                    toggle_prescription_taken_in_supabase(client, medication["id"], new_val)
+                                except Exception:
+                                    pass
+                                if new_val:
+                                    st.session_state.messages.append({
+                                        "role": "assistant",
+                                        "content": f"I've marked your {medication['name']} as taken for {meal_key.title()}. Great job!",
+                                        "agent": "Medication Agent",
+                                    })
+                                    st.toast(f"Marked {medication['name']} as taken!", icon="✅")
+                                else:
+                                    st.toast(f"Marked {medication['name']} as pending.", icon="ℹ️")
+                                st.rerun()
+
+        with discharge_tab:
+            head_a, head_b = st.columns([1, 0.52])
+            with head_a:
+                st.caption("RECENT → OLDER")
+            with head_b:
+                if st.button("＋ Upload", key="add_discharge_tab", use_container_width=True):
+                    add_item_dialog("Discharge document")
+            discharge = DATA["discharge"]
+            st.markdown('<div class="timeline-label">RECENT</div>', unsafe_allow_html=True)
+            record_card(
+                title="Surgical discharge",
+                meta=f"{discharge['discharge_date']} · {discharge['consultant']} · Completed",
+                key="discharge_card_primary",
+                record_type="discharge",
+                record=discharge,
+                icon=":material/clinical_notes:",
+            )
+            for index, document in enumerate(st.session_state.discharge_uploads):
+                record_card(
+                    title=document["name"],
+                    meta=f"{document['date']} · Awaiting review",
+                    key=f"discharge_upload_card_{index}",
+                    record_type="discharge_upload",
+                    record=document,
+                    icon=":material/description:",
+                )
+
+    with right:
+        st.markdown('<span class="right-panel-marker"></span>', unsafe_allow_html=True)
+        panel_header("Care assistant", "")
+
+        chat_box = st.container(border=False, key="chat_history")
+        with chat_box:
+            for message_index, message in enumerate(st.session_state.messages):
+                avatar = PATIENT_CHAT_AVATAR if message["role"] == "user" else VESPH_CHAT_AVATAR
+                with st.chat_message(message["role"], avatar=avatar):
+                    st.markdown(message["content"])
+                if message["role"] == "assistant" and message.get("agent"):
+                    st.markdown(
+                        f'<div class="agent-route">{escape(message["agent"])}</div>',
+                        unsafe_allow_html=True,
+                    )
+                escalation = message.get("escalation")
+                if message["role"] == "assistant" and escalation:
+                    if escalation.get("status") == "pending_confirmation":
+                        st.markdown(
+                            f'<div class="escalation-confirm"><strong>Resolution confirmation</strong>{escape(escalation["prompt"])}</div>',
+                            unsafe_allow_html=True,
+                        )
+                        with st.container(key=f"escalation_actions_{escalation['id']}"):
+                            for option_index, option in enumerate(escalation["options"]):
+                                if st.button(
+                                    option,
+                                    key=f"resolve_{escalation['id']}_{option_index}",
+                                    use_container_width=True,
+                                ):
+                                    confirm_escalation_resolution(message_index, option)
+                                    st.rerun()
+                    elif escalation.get("resolution"):
+                        st.markdown(
+                            f'<div class="escalation-resolved">Confirmed plan · {escape(escalation["resolution"])}</div>',
+                            unsafe_allow_html=True,
+                        )
+
+        with st.container(key="chat_dock"):
+            upload_col, form_col = st.columns([0.18, 1.18], gap="small")
+            with upload_col:
+                add_clicked = st.button(
+                    "",
+                    key="chat_upload_button",
+                    icon=":material/upload_file:",
+                    use_container_width=True,
+                    help="Upload or manually add a care record",
+                )
+            with form_col:
+                with st.form("patient_chat_form", clear_on_submit=True):
+                    prompt_col, send_col = st.columns([1, 0.18], gap="small")
+                    with prompt_col:
+                        prompt = st.text_input(
+                            "Message",
+                            placeholder="Ask about your care…",
+                            label_visibility="collapsed",
+                        )
+                    with send_col:
+                        submitted = st.form_submit_button(
+                            "",
+                            key="chat_send_submit",
+                            icon=":material/send:",
+                            type="primary",
+                            use_container_width=True,
+                            help="Send message",
+                        )
+            if add_clicked:
+                add_item_dialog("Diagnostic report")
+            if submitted and prompt.strip():
+                add_chat_message(prompt.strip())
+                st.rerun()
+
+            suggestions = [
+                "Did I take my morning meds?",
+                "What meds with lunch?",
+                "Next appointment?",
+                "My medicines?",
+            ]
+            with st.container(key="suggestion_row"):
+                suggestion_cols = st.columns(2, gap=None)
+                for index, suggestion in enumerate(suggestions):
+                    with suggestion_cols[index % 2]:
+                        if st.button(suggestion, key=f"suggestion_{index}", use_container_width=True):
+                            add_chat_message(suggestion)
+                            st.rerun()
+
+            st.markdown(
+                '<div class="safety-note"><strong>Emergency?</strong> Do not wait for chat. Call +91 22 4000 1122 or your local emergency service.</div>',
+                unsafe_allow_html=True,
+            )
 
 
-with middle:
-    st.markdown('<span class="middle-panel-marker"></span>', unsafe_allow_html=True)
-    panel_header("Notification centre", "")
-    next_appointment = DATA["appointments"][0]
-    reminder_strip = st.container(
-        horizontal=True,
-        wrap=False,
-        horizontal_alignment="left",
-        gap="small",
-        key="reminder_carousel",
-    )
-    with reminder_strip.container(border=True, width=340):
+def render_doctor_portal() -> None:
+    client = INTEGRATIONS.supabase_client()
+    doc_snap = fetch_doctor_snapshot(client, st.session_state.active_doctor_id)
+    doc = doc_snap["doctor"]
+    today_appts = doc_snap["today_appointments"]
+    week_appts = doc_snap["week_appointments"]
+    all_appts = doc_snap["all_appointments"]
+    unavailability = doc_snap["unavailability"]
+    stats = doc_snap["stats"]
+
+    doc_left, doc_main, doc_right = st.columns([0.88, 1.35, 1.05], gap="medium")
+
+    with doc_left:
+        st.markdown('<span class="left-panel-marker"></span>', unsafe_allow_html=True)
+        panel_header("Doctor Profile & Clinic", "", f"Updated {get_last_updated_str()} · OPD Live")
         st.markdown(
             f"""
-            <div class="reminder-card primary">
-              <div class="reminder-top"><div class="reminder-kicker">Appointment · action needed</div><div class="reminder-time">In 3 days</div></div>
-              <div class="reminder-title">{escape(next_appointment['type'])}</div>
-              <div class="reminder-detail">{escape(next_appointment['doctor'])} · {escape(next_appointment['date'])}<br>{escape(next_appointment['time'])} · {escape(next_appointment['location'])}</div>
-              <div class="reminder-meta">Reminder 1 of 2 · Bring latest CBC</div>
+            <div class="doctor-header-card">
+              <div style="display:flex; gap:12px; align-items:center;">
+                <div class="doctor-avatar">{escape(doc.get('initials', 'DR'))}</div>
+                <div>
+                  <div style="font:700 16px/1.2 'Manrope',sans-serif;">{escape(doc['name'])}</div>
+                  <div style="font-size:11px; opacity:.8; margin-top:2px;">{escape(doc.get('specialization', 'Specialist'))}</div>
+                </div>
+              </div>
+              <div style="margin-top:12px; padding-top:10px; border-top:1px solid rgba(255,255,255,.15); font-size:10px; opacity:.88; line-height:1.5;">
+                <div><strong>Department:</strong> {escape(doc.get('department', 'General Surgery'))}</div>
+                <div><strong>Location:</strong> {escape(doc.get('location', 'OPD Wing B, Room 304'))}</div>
+                <div><strong>Contact:</strong> {escape(doc.get('email', 'doctor@vesphcare.com'))}</div>
+              </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        action_a, action_b = st.columns(2, gap="small")
-        with action_a:
-            if st.button("Confirm", type="primary", key="confirm_reminder", use_container_width=True):
-                next_appointment["status"] = "Confirmed"
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": "Your surgical follow-up is confirmed. I’ll send the second reminder 24 hours before the appointment.",
-                        "agent": "Reminder Agent · Appointments",
-                    }
-                )
+
+        st.markdown('<div class="timeline-label">CLINIC WORKLOAD</div>', unsafe_allow_html=True)
+        s_c1, s_c2, s_c3 = st.columns(3)
+        s_c1.metric("Today", f"{stats['today_count']}")
+        s_c2.metric("This Week", f"{stats['week_count']}")
+        s_c3.metric("Blocked", f"{stats['blocked_count']}")
+
+        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+        st.markdown('<div class="timeline-label">SCHEDULE CONTROLS</div>', unsafe_allow_html=True)
+        if st.button("⛔ Mark Unavailability / Block Slot", key="doc_block_btn", type="primary", use_container_width=True):
+            doctor_unavailability_dialog(doc["id"], doc["name"])
+
+        if st.button("＋ Schedule New Appointment", key="doc_add_appt_btn", use_container_width=True):
+            doctor_book_appointment_dialog(doc["id"])
+
+        if st.button("↺ Reset Database & State", key="doc_reset_db_btn", use_container_width=True, help="Reset Supabase database back to baseline"):
+            with st.spinner("Restoring Supabase database to baseline..."):
+                reset_supabase_database(INTEGRATIONS.supabase_client())
+                st.session_state.clear()
+                st.toast("Database and session reset to baseline!", icon="✅")
                 st.rerun()
-        with action_b:
-            if st.button("Reschedule", key="reschedule_reminder", use_container_width=True):
-                reschedule_dialog()
-    with reminder_strip.container(border=True, width=340):
-        st.markdown(
-            """
-            <div class="reminder-card secondary">
-              <div class="reminder-top"><div class="reminder-kicker">Diagnostic</div><div class="reminder-time">Tomorrow</div></div>
-              <div class="reminder-title">Complete Blood Count</div>
-              <div class="reminder-detail">20 Sep · 9:00 AM<br>Ground floor · No fasting</div>
-              <div class="reminder-meta">Reminder 1 of 2</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        if st.button("View booking", icon=":material/visibility:", key="view_cbc_reminder", use_container_width=True):
-            record_detail_dialog("diagnostic_booking", DATA["diagnostic_schedule"][0])
-    with reminder_strip.container(border=True, width=340):
-        st.markdown(
-            """
-            <div class="reminder-card secondary">
-              <div class="reminder-top"><div class="reminder-kicker">Document</div><div class="reminder-time">Due 24 Sep</div></div>
-              <div class="reminder-title">Insurance claim form</div>
-              <div class="reminder-detail">Signed copy required<br>1 document pending</div>
-              <div class="reminder-meta">Upload by 24 Sep · Reminder 1 of 2</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        if st.button("Upload", icon=":material/upload_file:", key="insurance_upload", use_container_width=True):
-            add_item_dialog("Discharge document")
 
-    appointments_tab, diagnostics_tab, medications_tab, discharge_tab = st.tabs(
-        ["Appointments", "Diagnostics", "Medication", "Discharge"]
-    )
-
-    with appointments_tab:
-        head_a, head_b = st.columns([1, 0.52])
-        with head_a:
-            st.caption("UPCOMING → PAST")
-        with head_b:
-            if st.button("＋ Add", key="new_appointment_tab", use_container_width=True):
-                add_item_dialog("New appointment")
-
-        upcoming_appointments = [row for row in DATA["appointments"] if row["status"] != "Completed"]
-        past_appointments = [row for row in DATA["appointments"] if row["status"] == "Completed"]
-        for group_label, records in [("UPCOMING", upcoming_appointments), ("PAST", past_appointments)]:
-            st.markdown(f'<div class="timeline-label">{group_label}</div>', unsafe_allow_html=True)
-            for appointment in records:
-                record_card(
-                    title=appointment["type"],
-                    meta=f"{appointment['date']} · {appointment['time']} · {appointment['doctor']} · {appointment['status']}",
-                    key=f"appointment_card_{appointment['id']}",
-                    record_type="appointment",
-                    record=appointment,
-                    icon=":material/calendar_month:",
-                )
-
-    with diagnostics_tab:
-        head_a, head_b = st.columns([1, 0.52])
-        with head_a:
-            st.caption("UPCOMING → PAST")
-        with head_b:
-            if st.button("＋ Upload", key="add_report_tab", use_container_width=True):
-                add_item_dialog("Diagnostic report")
-
-        st.markdown('<div class="timeline-label">UPCOMING</div>', unsafe_allow_html=True)
-        for scheduled in DATA["diagnostic_schedule"]:
-            if scheduled["status"] != "Booked":
-                continue
-            record_card(
-                title=scheduled["test"],
-                meta=f"{scheduled['date']} · {scheduled['time']} · {scheduled['location']} · {scheduled['status']}",
-                key=f"diagnostic_booking_card_{scheduled['id']}",
-                record_type="diagnostic_booking",
-                record=scheduled,
-                icon=":material/science:",
-            )
-
-        st.markdown('<div class="timeline-label">PAST RESULTS</div>', unsafe_allow_html=True)
-        for report in DATA["diagnostics"]:
-            record_card(
-                title=report["name"],
-                meta=f"{report['date']} · {report['category']} · {report['status']}",
-                key=f"diagnostic_result_card_{report['id']}",
-                record_type="diagnostic_result",
-                record=report,
-                icon=":material/lab_profile:",
-            )
-
-    with medications_tab:
-        head_a, head_b = st.columns([1, 0.52])
-        with head_a:
-            st.caption("CURRENT → COMPLETED")
-        with head_b:
-            if st.button("＋ Add", key="add_medication_tab", use_container_width=True):
-                add_item_dialog("Medication")
-        st.markdown('<div class="timeline-label">CURRENT</div>', unsafe_allow_html=True)
-        for index, medication in enumerate(DATA["medications"]):
-            record_card(
-                title=medication["name"],
-                meta=f"{medication['instruction']} · {medication['status']}",
-                key=f"medication_card_{index}",
-                record_type="medication",
-                record=medication,
-                icon=":material/medication:",
-            )
-
-    with discharge_tab:
-        head_a, head_b = st.columns([1, 0.52])
-        with head_a:
-            st.caption("RECENT → OLDER")
-        with head_b:
-            if st.button("＋ Upload", key="add_discharge_tab", use_container_width=True):
-                add_item_dialog("Discharge document")
-        discharge = DATA["discharge"]
-        st.markdown('<div class="timeline-label">RECENT</div>', unsafe_allow_html=True)
-        record_card(
-            title="Surgical discharge",
-            meta=f"{discharge['discharge_date']} · {discharge['consultant']} · Completed",
-            key="discharge_card_primary",
-            record_type="discharge",
-            record=discharge,
-            icon=":material/clinical_notes:",
-        )
-        for index, document in enumerate(st.session_state.discharge_uploads):
-            record_card(
-                title=document["name"],
-                meta=f"{document['date']} · Awaiting review",
-                key=f"discharge_upload_card_{index}",
-                record_type="discharge_upload",
-                record=document,
-                icon=":material/description:",
-            )
-
-
-with right:
-    st.markdown('<span class="right-panel-marker"></span>', unsafe_allow_html=True)
-    panel_header("Care assistant", "")
-
-    chat_box = st.container(border=False, key="chat_history")
-    with chat_box:
-        for message_index, message in enumerate(st.session_state.messages):
-            avatar = PATIENT_CHAT_AVATAR if message["role"] == "user" else VESPH_CHAT_AVATAR
-            with st.chat_message(message["role"], avatar=avatar):
-                st.markdown(message["content"])
-            if message["role"] == "assistant" and message.get("agent"):
-                st.markdown(
-                    f'<div class="agent-route">{escape(message["agent"])}</div>',
-                    unsafe_allow_html=True,
-                )
-            escalation = message.get("escalation")
-            if message["role"] == "assistant" and escalation:
-                if escalation.get("status") == "pending_confirmation":
+        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+        st.markdown('<div class="timeline-label">BLOCKED TIME & LEAVE</div>', unsafe_allow_html=True)
+        if not unavailability:
+            st.caption("No schedule blocks active. All open OPD slots are available to patients.")
+        else:
+            for unavail in unavailability:
+                u_id = unavail["unavailability_id"]
+                u_date = unavail["blocked_date"]
+                u_type = unavail["block_type"]
+                u_slot = unavail.get("blocked_slot") or "All Day"
+                u_reason = unavail.get("reason", "Doctor unavailable")
+                col_u_info, col_u_del = st.columns([3.2, 1.2], gap="small")
+                with col_u_info:
                     st.markdown(
-                        f'<div class="escalation-confirm"><strong>Resolution confirmation</strong>{escape(escalation["prompt"])}</div>',
+                        f"""
+                        <div style="background:white; border:1px solid #FFD8A8; border-radius:9px; padding:7px 9px; font-size:10px;">
+                          <strong style="color:#B25E00;">{escape(u_date)} · {escape(u_slot)}</strong>
+                          <div style="color:var(--muted); font-size:9px; margin-top:2px;">{escape(u_reason)}</div>
+                        </div>
+                        """,
                         unsafe_allow_html=True,
                     )
-                    with st.container(key=f"escalation_actions_{escalation['id']}"):
-                        for option_index, option in enumerate(escalation["options"]):
-                            if st.button(
-                                option,
-                                key=f"resolve_{escalation['id']}_{option_index}",
-                                use_container_width=True,
-                            ):
-                                confirm_escalation_resolution(message_index, option)
+                with col_u_del:
+                    if st.button("Unblock", key=f"unblock_btn_{u_id}", use_container_width=True):
+                        record_activity_update("Doctor availability unblocked")
+                        unblock_doctor_slot_in_supabase(client, u_id)
+                        st.session_state._doctor_data_id = None
+                        st.toast(f"Unblocked {u_date} {u_slot}!", icon="✅")
+                        st.rerun()
+
+    with doc_main:
+        st.markdown('<span class="middle-panel-marker"></span>', unsafe_allow_html=True)
+        panel_header(
+            "Doctor Appointment Agenda",
+            f"Schedule Overview · {doc['name']}",
+            "Click on any appointment to view the patient's full clinical chart, diagnostic labs, medications, and surgical notes.",
+        )
+
+        doc_tabs = st.tabs([
+            f"Today (18 Oct) · {len(today_appts)}",
+            f"This Week (18–24 Oct) · {len(week_appts)}",
+            f"All Scheduled & History · {len(all_appts)}",
+        ])
+
+        agenda_groups = [
+            (doc_tabs[0], today_appts, "TODAY'S APPOINTMENTS (18 OCT 2026)", "today"),
+            (doc_tabs[1], week_appts, "WEEKLY APPOINTMENTS (18 – 24 OCT 2026)", "week"),
+            (doc_tabs[2], all_appts, "ALL APPOINTMENTS & PATIENT VISITS", "all"),
+        ]
+
+        for tab_obj, appt_list, group_title, tab_prefix in agenda_groups:
+            with tab_obj:
+                st.markdown(f'<div class="timeline-label">{group_title}</div>', unsafe_allow_html=True)
+                if not appt_list:
+                    st.info("No appointments scheduled for this period.")
+                else:
+                    for idx, a in enumerate(appt_list):
+                        p_name = a.get("patient_name", "Patient")
+                        p_age = a.get("patient_age", "30")
+                        p_gender = a.get("patient_gender", "F")
+                        p_id = a.get("patient_id", "")
+                        p_phone = a.get("patient_phone", "")
+                        appt_date = a.get("date", "")
+                        appt_time = a.get("time", "")
+                        appt_type = a.get("type", "Consultation")
+                        appt_status = a.get("status", "Confirmed")
+                        appt_loc = a.get("location", "OPD Wing B")
+                        appt_sum = a.get("summary", "")
+                        rebook_notice = a.get("rebook_notice")
+
+                        status_badge_class = "status" if appt_status == "Confirmed" else ("status wait" if "Reschedule" in appt_status else "status old")
+
+                        notice_html = ""
+                        if rebook_notice:
+                            notice_html = f'<div class="rebook-notice">⚠️ <strong>Rescheduled Notice:</strong> {escape(rebook_notice)}</div>'
+
+                        st.markdown(
+                            f"""
+                            <div class="agenda-card">
+                              <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                                <div style="display:flex; align-items:center; gap:8px;">
+                                  <span class="agenda-time">{escape(appt_time)}</span>
+                                  <strong style="font-size:13px; color:var(--ink);">{escape(p_name)}</strong>
+                                  <span style="font-size:10px; color:var(--muted);">({escape(p_gender)}, {p_age}y) · ID: {escape(p_id[-4:] if p_id else '')}</span>
+                                </div>
+                                <div style="display:flex; gap:6px; align-items:center;">
+                                  <span class="micro-pill" style="font-weight:700;">{escape(appt_type)}</span>
+                                  <span class="{status_badge_class}">{escape(appt_status)}</span>
+                                </div>
+                              </div>
+                              <div style="margin-top:6px; font-size:11px; color:#425B58; line-height:1.4;">
+                                <strong>Date:</strong> {escape(appt_date)} · <strong>Location:</strong> {escape(appt_loc)} · <strong>Phone:</strong> {escape(p_phone)}
+                              </div>
+                              <div style="margin-top:5px; font-size:11px; color:var(--ink); line-height:1.4;">
+                                {escape(appt_sum)}
+                              </div>
+                              {notice_html}
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+
+                        col_action1, col_action2, _ = st.columns([1.5, 1.5, 2.5], gap="small")
+                        with col_action1:
+                            if st.button("🩺 View Patient Chart", key=f"view_chart_{tab_prefix}_{idx}_{a['id']}", use_container_width=True):
+                                patient_clinical_chart_dialog(p_id)
+                        with col_action2:
+                            if st.button("＋ Book Follow-up", key=f"book_fu_{tab_prefix}_{idx}_{a['id']}", use_container_width=True):
+                                doctor_book_appointment_dialog(doc["id"], default_patient_id=p_id)
+                        st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
+
+    with doc_right:
+        st.markdown('<span class="right-panel-marker"></span>', unsafe_allow_html=True)
+        panel_header("Clinical Assistant", "", "RAG Consultation & EMR Sync")
+
+        doc_chat_box = st.container(border=False, key="doctor_chat_history")
+        with doc_chat_box:
+            for message_index, message in enumerate(st.session_state.doctor_messages):
+                avatar = DOCTOR_CHAT_AVATAR if message["role"] == "user" else VESPH_CHAT_AVATAR
+                with st.chat_message(message["role"], avatar=avatar):
+                    st.markdown(message["content"])
+                if message["role"] == "assistant" and message.get("agent"):
+                    st.markdown(
+                        f'<div class="agent-route">{escape(message["agent"])}</div>',
+                        unsafe_allow_html=True,
+                    )
+
+        with st.container(key="doctor_chat_dock"):
+            col_up, col_smpl = st.columns([1, 1], gap="small")
+            with col_up:
+                with st.popover("📤 Upload Note (PDF)", use_container_width=True):
+                    st.caption("Upload consultation or prescription PDF:")
+                    uploaded_pdf = st.file_uploader(
+                        "Consultation PDF",
+                        type=["pdf"],
+                        key="doc_pdf_uploader_widget",
+                        label_visibility="collapsed",
+                    )
+                    if uploaded_pdf is not None:
+                        if st.button("⚡ Process & Sync to DB", key="btn_process_uploaded_pdf", type="primary", use_container_width=True):
+                            with st.spinner("Extracting text and syncing consultation to Supabase..."):
+                                handle_consultation_pdf_ingestion(
+                                    uploaded_pdf.getvalue(),
+                                    file_name=uploaded_pdf.name,
+                                )
                                 st.rerun()
-                elif escalation.get("resolution"):
-                    st.markdown(
-                        f'<div class="escalation-resolved">Confirmed plan · {escape(escalation["resolution"])}</div>',
-                        unsafe_allow_html=True,
-                    )
+            with col_smpl:
+                if st.button("📑 Ingest Sample Note", key="btn_ingest_sample_note", use_container_width=True, help="Load and auto-sync Dr. Rhea Mehta's Day 8 consultation note for Ananya Iyer"):
+                    with st.spinner("Extracting text and syncing consultation to Supabase..."):
+                        sample_bytes = generate_sample_consultation_pdf()
+                        handle_consultation_pdf_ingestion(
+                            sample_bytes,
+                            file_name="Dr_Rhea_Mehta_Consultation_18Oct2026.pdf",
+                        )
+                        st.rerun()
 
-    with st.container(key="chat_dock"):
-        upload_col, form_col = st.columns([0.18, 1.18], gap="small")
-        with upload_col:
-            add_clicked = st.button(
-                "",
-                key="chat_upload_button",
-                icon=":material/upload_file:",
-                use_container_width=True,
-                help="Upload or manually add a care record",
-            )
-        with form_col:
-            with st.form("patient_chat_form", clear_on_submit=True):
+            with st.form("doctor_chat_form", clear_on_submit=True):
                 prompt_col, send_col = st.columns([1, 0.18], gap="small")
                 with prompt_col:
-                    prompt = st.text_input(
+                    doc_prompt = st.text_input(
                         "Message",
-                        placeholder="Ask about your care…",
+                        placeholder="Ask clinical question or paste consultation note…",
                         label_visibility="collapsed",
                     )
                 with send_col:
-                    submitted = st.form_submit_button(
+                    doc_submitted = st.form_submit_button(
                         "",
-                        key="chat_send_submit",
+                        key="doc_send_submit",
                         icon=":material/send:",
                         type="primary",
                         use_container_width=True,
-                        help="Send message",
+                        help="Send message or consultation note",
                     )
-        if add_clicked:
-            add_item_dialog("Diagnostic report")
-        if submitted and prompt.strip():
-            add_chat_message(prompt.strip())
-            st.rerun()
 
-        suggestions = [
-            "Next appointment?",
-            "Latest diagnostic?",
-            "My medicines?",
-            "Discharge instructions?",
-        ]
-        with st.container(key="suggestion_row"):
-            suggestion_cols = st.columns(2, gap=None)
-            for index, suggestion in enumerate(suggestions):
-                with suggestion_cols[index % 2]:
-                    if st.button(suggestion, key=f"suggestion_{index}", use_container_width=True):
-                        add_chat_message(suggestion)
-                        st.rerun()
+            if doc_submitted and doc_prompt.strip():
+                add_doctor_chat_message(doc_prompt.strip(), doc_snap)
+                st.rerun()
 
+            doc_suggestions = [
+                "Today's appointments?",
+                "Ananya's current meds?",
+                "Summarize Ananya's recovery",
+                "Weekly clinic schedule",
+            ]
+            with st.container(key="doc_suggestion_row"):
+                s_cols = st.columns(2, gap=None)
+                for s_idx, sugg in enumerate(doc_suggestions):
+                    with s_cols[s_idx % 2]:
+                        if st.button(sugg, key=f"doc_sugg_{s_idx}", use_container_width=True):
+                            add_doctor_chat_message(sugg, doc_snap)
+                            st.rerun()
+
+            st.markdown(
+                '<div class="safety-note" style="border-left-color:var(--teal);"><strong>EMR RAG Sync:</strong> Consultation updates write directly to live Supabase clinical records.</div>',
+                unsafe_allow_html=True,
+            )
+
+
+
+# -----------------------------------------------------------------------------
+# Top Navigation Bar & Portal Dispatch
+# -----------------------------------------------------------------------------
+if st.session_state.get("doctor_toast"):
+    msg, ic = st.session_state.pop("doctor_toast")
+    st.toast(msg, icon=ic)
+
+top_bar_col1, top_bar_col2, top_bar_col3 = st.columns([1.1, 1.3, 1.1], gap="medium")
+
+with top_bar_col1:
+    st.markdown(
+        """
+        <div style="display:flex; align-items:center; gap:10px; padding:3px 0;">
+          <div class="brand-mark" style="width:34px; height:34px; font-size:18px;">✚</div>
+          <div>
+            <div style="font:700 16px/1.2 'Manrope',sans-serif; color:var(--ink);">VESPH Care</div>
+            <div style="font-size:10px; color:var(--muted);">Virtual Engagement System for Patient Health</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+with top_bar_col2:
+    mode_options = ["👤 Patient View", "🩺 Doctor View"]
+    current_mode_idx = 0 if st.session_state.portal_mode == "patient" else 1
+    selected_mode = st.radio(
+        "Portal Mode",
+        mode_options,
+        index=current_mode_idx,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="portal_mode_radio",
+    )
+    new_mode = "patient" if "Patient" in selected_mode else "doctor"
+    if new_mode != st.session_state.portal_mode:
+        st.session_state.portal_mode = new_mode
+        st.rerun()
+
+with top_bar_col3:
+    if st.session_state.portal_mode == "patient":
+        st.session_state.active_patient_id = "22222222-2222-2222-2222-222222222222"
         st.markdown(
-            '<div class="safety-note"><strong>Emergency?</strong> Do not wait for chat. Call +91 22 4000 1122 or your local emergency service.</div>',
+            """
+            <div style="display:flex; justify-content:flex-end; align-items:center; height:100%; padding-top:2px;">
+              <div style="background:#E6F4F1; border:1px solid #94D3C5; border-radius:999px; padding:6px 14px; font-size:12px; font-weight:700; color:#075651; display:flex; align-items:center; gap:6px;">
+                <span>👤</span>
+                <span>Ananya Iyer · Patient</span>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.session_state.active_doctor_id = "11111111-1111-1111-1111-111111111111"
+        st.markdown(
+            """
+            <div style="display:flex; justify-content:flex-end; align-items:center; height:100%; padding-top:2px;">
+              <div style="background:#E6F4F1; border:1px solid #94D3C5; border-radius:999px; padding:6px 14px; font-size:12px; font-weight:700; color:#075651; display:flex; align-items:center; gap:6px;">
+                <span>🩺</span>
+                <span>Dr. Rhea Mehta · Lead Laparoscopic Surgeon</span>
+              </div>
+            </div>
+            """,
             unsafe_allow_html=True,
         )
 
+st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
+
+if st.session_state.portal_mode == "patient":
+    render_patient_portal()
+else:
+    render_doctor_portal()
 
 st.markdown(
-    '<div class="footer-note">Capstone prototype · Synthetic patient data · Supported open-ended questions use Groq when configured</div>',
+    '<div class="footer-note">VESPH Care · Live Supabase Database Connection · Supported open-ended questions use Groq when configured</div>',
     unsafe_allow_html=True,
 )

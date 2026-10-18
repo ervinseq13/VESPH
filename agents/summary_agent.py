@@ -9,24 +9,19 @@ from orchestrator.state import OrchestratorContext, OrchestratorState
 
 
 SUMMARY_TERMS = (
-    "medicine",
-    "medication",
-    "tablet",
-    "inhaler",
-    "report",
-    "test result",
-    "diagnostic",
-    "blood",
-    "cbc",
-    "discharge",
-    "surgery",
-    "operation",
-    "recovery",
-    "instructions",
-    "summary",
-    "health",
-    "how am i",
-    "history",
+    # Medications
+    "medicine", "medication", "tablet", "inhaler", "pills", "capsule",
+    # Diagnostics and reports
+    "report", "test result", "diagnostic", "blood", "cbc", "lab result",
+    "what did the test show", "my numbers", "was my report okay",
+    # Surgery, discharge, recovery
+    "discharge", "surgery", "operation", "recovery", "wound",
+    "instructions", "what should i avoid", "when can i exercise",
+    # General health queries
+    "summary", "health", "how am i doing", "how am i", "history",
+    "what's wrong with me", "my condition", "my diagnosis",
+    "can i eat normally", "any restrictions", "am i getting better",
+    "what did the doctor say", "my allergies",
 )
 
 

@@ -47,7 +47,7 @@ python -m unittest discover -s tests -v
 ## Demo walkthrough
 
 1. Start with the **72-hour surgical follow-up reminder** in the centre and confirm it.
-2. Open **Reschedule**, choose a preferred time, and show that the existing appointment remains active until staff confirm the request.
+2. Open **Reschedule**, choose an available timeslot, and show that open slots are automatically accepted and confirmed immediately without waiting for hospital approval.
 3. Move across the four care tabs: **Appointments**, **Diagnostics**, **Medication**, and **Discharge**. Click any record card to open its detail popup and download action.
 4. Use the **+** button in the assistant panel to request a new appointment or upload a diagnostic file.
 5. Ask “Summarise my latest report” and “What medicines am I taking?”
