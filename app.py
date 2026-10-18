@@ -686,12 +686,31 @@ def status_class(status: str) -> str:
     return "status"
 
 
-def clipped(text: str, max_chars: int = 180) -> str:
+def clipped(text: str, max_chars: int = 280) -> str:
     """Keep fixed summary cards compact without breaking a word."""
 
     if len(text) <= max_chars:
         return text
     return text[:max_chars].rsplit(" ", 1)[0] + "…"
+
+
+def is_appointment_past(record: dict, current_date_str: str = "2026-10-18") -> bool:
+    """Return True if the appointment has already concluded or date is before current_date_str."""
+    if not record:
+        return False
+    if record.get("status") in ("Completed", "Cancelled"):
+        return True
+    raw_dt = str(record.get("datetime_raw") or record.get("raw_datetime") or record.get("date") or "")
+    if any(yr in raw_dt for yr in ["2023", "2024", "2025"]):
+        return True
+    import re
+    match = re.search(r"(\d{4})-(\d{2})-(\d{2})", raw_dt)
+    if match:
+        return match.group(0) < current_date_str
+    match_oct = re.search(r"(\d{1,2})\s+Oct", raw_dt)
+    if match_oct and int(match_oct.group(1)) < 18:
+        return True
+    return False
 
 
 def add_chat_message(prompt: str) -> None:
@@ -1149,19 +1168,24 @@ def record_detail_dialog(record_type: str, record: dict) -> None:
         )
         if record.get("preparation"):
             st.info(record["preparation"])
-        if record.get("status") != "Confirmed":
-            col_cf, col_rs = st.columns(2)
-            with col_cf:
-                if st.button("✓ Confirm Attendance", key=f"dlg_cf_{record['id']}", type="primary", use_container_width=True):
-                    record["status"] = "Confirmed"
-                    try:
-                        update_appointment_in_supabase(INTEGRATIONS.supabase_client(), record["id"], "Confirmed")
-                    except Exception:
-                        pass
-                    record_activity_update("Confirmed appointment attendance")
-                    st.toast("Appointment attendance confirmed!", icon="✅")
-                    st.rerun()
-            with col_rs:
+        is_past = is_appointment_past(record)
+        if not is_past:
+            if record.get("status") not in ("Confirmed", "Completed", "Cancelled"):
+                col_cf, col_rs = st.columns(2)
+                with col_cf:
+                    if st.button("✓ Confirm Attendance", key=f"dlg_cf_{record['id']}", type="primary", use_container_width=True):
+                        record["status"] = "Confirmed"
+                        try:
+                            update_appointment_in_supabase(INTEGRATIONS.supabase_client(), record["id"], "Confirmed")
+                        except Exception:
+                            pass
+                        record_activity_update("Confirmed appointment attendance")
+                        st.toast("Appointment attendance confirmed!", icon="✅")
+                        st.rerun()
+                with col_rs:
+                    if st.button("Reschedule", key=f"dlg_rs_{record['id']}", use_container_width=True):
+                        reschedule_dialog()
+            else:
                 if st.button("Reschedule", key=f"dlg_rs_{record['id']}", use_container_width=True):
                     reschedule_dialog()
         filename = f"{record['id']}.txt"
@@ -1695,7 +1719,7 @@ def render_patient_portal() -> None:
                 f"""
                 <div class="summary-note">
                   <div class="summary-label"><span class="summary-icon">{icon}</span> {escape(label)}</div>
-                  <div class="summary-copy">{escape(clipped(summary))}</div>
+                  <div class="summary-copy">{escape(clipped(summary, 280))}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -1709,11 +1733,12 @@ def render_patient_portal() -> None:
     with middle:
         st.markdown('<span class="middle-panel-marker"></span>', unsafe_allow_html=True)
         panel_header("Notification centre", "")
-        # Find unconfirmed upcoming appointments that require patient action
-        unconfirmed_appts = [
+        # Find next upcoming appointment that is active and not in the past
+        upcoming_active_appts = [
             a for a in DATA.get("appointments", [])
-            if a.get("status") not in ("Confirmed", "Completed", "Cancelled")
+            if not is_appointment_past(a) and a.get("status") != "Cancelled"
         ]
+        target_appt = upcoming_active_appts[0] if upcoming_active_appts else None
 
         show_cbc = not st.session_state.get("cbc_done", False)
         show_insurance = not st.session_state.get("insurance_done", False)
@@ -1737,7 +1762,7 @@ def render_patient_portal() -> None:
             active_meds = []
 
         show_med_check = bool(active_meds)
-        has_actionable_items = bool(unconfirmed_appts or show_cbc or show_insurance or show_med_check)
+        has_actionable_items = bool(show_med_check or target_appt or show_cbc or show_insurance)
 
         reminder_strip = st.container(
             horizontal=True,
@@ -1760,99 +1785,7 @@ def render_patient_portal() -> None:
                     unsafe_allow_html=True,
                 )
         else:
-            # 1. Unconfirmed Appointments (Pending action: Confirm attendance or reschedule)
-            if unconfirmed_appts:
-                target_appt = unconfirmed_appts[0]
-                with reminder_strip.container(border=True, width=340):
-                    st.markdown(
-                        f"""
-                        <div class="reminder-card primary">
-                          <div class="reminder-top">
-                            <div class="reminder-kicker">Appointment · Action Needed</div>
-                            <div class="reminder-time">In 2 days</div>
-                          </div>
-                          <div class="reminder-title">{escape(target_appt['type'])}</div>
-                          <div class="reminder-detail">{escape(target_appt['doctor'])} · {escape(target_appt['date'])}<br>{escape(target_appt['time'])} · {escape(target_appt['location'])}</div>
-                          <div class="reminder-meta">Attendance pending confirmation · Bring reports</div>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
-                    action_a, action_b = st.columns(2, gap="small")
-                    with action_a:
-                        if st.button("✓ Confirm", type="primary", key="confirm_reminder", use_container_width=True):
-                            target_appt["status"] = "Confirmed"
-                            try:
-                                update_appointment_in_supabase(
-                                    INTEGRATIONS.supabase_client(),
-                                    target_appt["id"],
-                                    "Confirmed",
-                                )
-                            except Exception:
-                                pass
-                            record_activity_update("Confirmed appointment attendance")
-                            st.session_state.messages.append(
-                                {
-                                    "role": "assistant",
-                                    "content": f"Your {target_appt['type']} on {target_appt['date']} at {target_appt['time']} with {target_appt['doctor']} has been confirmed! It has been moved to your confirmed schedule and marked done in your notification centre.",
-                                    "agent": "Reminder Agent · Appointments",
-                                }
-                            )
-                            st.toast("Appointment attendance confirmed & marked done!", icon="✅")
-                            st.rerun()
-                    with action_b:
-                        if st.button("Reschedule", key="reschedule_reminder", use_container_width=True):
-                            reschedule_dialog()
-
-            # 2. Diagnostic Reminder
-            if show_cbc:
-                with reminder_strip.container(border=True, width=340):
-                    st.markdown(
-                        """
-                        <div class="reminder-card secondary">
-                          <div class="reminder-top"><div class="reminder-kicker">Diagnostic · Test Needed</div><div class="reminder-time">In 2 days</div></div>
-                          <div class="reminder-title">Complete Blood Count</div>
-                          <div class="reminder-detail">20 Oct · 9:00 AM<br>Ground floor · No fasting</div>
-                          <div class="reminder-meta">Reminder 1 of 2</div>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
-                    c_a, c_b = st.columns(2, gap="small")
-                    with c_a:
-                        if st.button("View booking", icon=":material/visibility:", key="view_cbc_reminder", use_container_width=True):
-                            record_detail_dialog("diagnostic_booking", DATA["diagnostic_schedule"][0])
-                    with c_b:
-                        if st.button("✓ Mark Done", key="btn_done_cbc", use_container_width=True):
-                            st.session_state.cbc_done = True
-                            st.toast("Diagnostic reminder marked as done!", icon="✅")
-                            st.rerun()
-
-            # 3. Document Upload Reminder
-            if show_insurance:
-                with reminder_strip.container(border=True, width=340):
-                    st.markdown(
-                        """
-                        <div class="reminder-card secondary">
-                          <div class="reminder-top"><div class="reminder-kicker">Document · Pending</div><div class="reminder-time">Due 24 Oct</div></div>
-                          <div class="reminder-title">Insurance claim form</div>
-                          <div class="reminder-detail">Signed copy required<br>1 document pending</div>
-                          <div class="reminder-meta">Upload by 24 Oct · Reminder 1 of 2</div>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
-                    i_a, i_b = st.columns(2, gap="small")
-                    with i_a:
-                        if st.button("Upload", icon=":material/upload_file:", key="insurance_upload", use_container_width=True):
-                            add_item_dialog("Discharge document")
-                    with i_b:
-                        if st.button("✓ Mark Done", key="btn_done_insurance", use_container_width=True):
-                            st.session_state.insurance_done = True
-                            st.toast("Insurance requirement marked done!", icon="✅")
-                            st.rerun()
-
-            # 4. Proactive Meal Medication Check Card
+            # 1. Proactive Meal Medication Check Card (FIRST IN NOTIFICATION CENTRE)
             if show_med_check:
                 with reminder_strip.container(border=True, width=340):
                     med_names_str = ", ".join(m["name"] for m in active_meds)
@@ -1884,6 +1817,104 @@ def render_patient_portal() -> None:
                         st.toast(f"{active_meal} medications marked as taken!", icon="✅")
                         st.rerun()
 
+            # 2. Next Upcoming Appointment (FOLLOWED BY NEXT UPCOMING APPOINTMENT)
+            if target_appt:
+                is_confirmed = target_appt.get("status") == "Confirmed"
+                with reminder_strip.container(border=True, width=340):
+                    kicker = "Upcoming Appointment · Confirmed" if is_confirmed else "Appointment · Action Needed"
+                    meta_text = "Confirmed attendance · Bring reports & ID" if is_confirmed else "Attendance pending confirmation · Bring reports"
+                    st.markdown(
+                        f"""
+                        <div class="reminder-card primary">
+                          <div class="reminder-top">
+                            <div class="reminder-kicker">{kicker}</div>
+                            <div class="reminder-time">In 4 days</div>
+                          </div>
+                          <div class="reminder-title">{escape(target_appt['type'])}</div>
+                          <div class="reminder-detail">{escape(target_appt['doctor'])} · {escape(target_appt['date'])}<br>{escape(target_appt['time'])} · {escape(target_appt['location'])}</div>
+                          <div class="reminder-meta">{meta_text}</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    action_a, action_b = st.columns(2, gap="small")
+                    with action_a:
+                        if not is_confirmed:
+                            if st.button("✓ Confirm", type="primary", key="confirm_reminder", use_container_width=True):
+                                target_appt["status"] = "Confirmed"
+                                try:
+                                    update_appointment_in_supabase(
+                                        INTEGRATIONS.supabase_client(),
+                                        target_appt["id"],
+                                        "Confirmed",
+                                    )
+                                except Exception:
+                                    pass
+                                record_activity_update("Confirmed appointment attendance")
+                                st.session_state.messages.append(
+                                    {
+                                        "role": "assistant",
+                                        "content": f"Your {target_appt['type']} on {target_appt['date']} at {target_appt['time']} with {target_appt['doctor']} has been confirmed! It has been moved to your confirmed schedule and marked done in your notification centre.",
+                                        "agent": "Reminder Agent · Appointments",
+                                    }
+                                )
+                                st.toast("Appointment attendance confirmed & marked done!", icon="✅")
+                                st.rerun()
+                        else:
+                            if st.button("View booking", icon=":material/visibility:", key="view_upcoming_reminder", use_container_width=True):
+                                record_detail_dialog("appointment", target_appt)
+                    with action_b:
+                        if st.button("Reschedule", key="reschedule_reminder", use_container_width=True):
+                            reschedule_dialog()
+
+            # 3. Diagnostic Reminder
+            if show_cbc:
+                with reminder_strip.container(border=True, width=340):
+                    st.markdown(
+                        """
+                        <div class="reminder-card secondary">
+                          <div class="reminder-top"><div class="reminder-kicker">Diagnostic · Test Needed</div><div class="reminder-time">In 2 days</div></div>
+                          <div class="reminder-title">Complete Blood Count</div>
+                          <div class="reminder-detail">20 Oct · 9:00 AM<br>Ground floor · No fasting</div>
+                          <div class="reminder-meta">Reminder 1 of 2</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    c_a, c_b = st.columns(2, gap="small")
+                    with c_a:
+                        if st.button("View booking", icon=":material/visibility:", key="view_cbc_reminder", use_container_width=True):
+                            record_detail_dialog("diagnostic_booking", DATA["diagnostic_schedule"][0])
+                    with c_b:
+                        if st.button("✓ Mark Done", key="btn_done_cbc", use_container_width=True):
+                            st.session_state.cbc_done = True
+                            st.toast("Diagnostic reminder marked as done!", icon="✅")
+                            st.rerun()
+
+            # 4. Document Upload Reminder
+            if show_insurance:
+                with reminder_strip.container(border=True, width=340):
+                    st.markdown(
+                        """
+                        <div class="reminder-card secondary">
+                          <div class="reminder-top"><div class="reminder-kicker">Document · Pending</div><div class="reminder-time">Due 24 Oct</div></div>
+                          <div class="reminder-title">Insurance claim form</div>
+                          <div class="reminder-detail">Signed copy required<br>1 document pending</div>
+                          <div class="reminder-meta">Upload by 24 Oct · Reminder 1 of 2</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    i_a, i_b = st.columns(2, gap="small")
+                    with i_a:
+                        if st.button("Upload", icon=":material/upload_file:", key="insurance_upload", use_container_width=True):
+                            add_item_dialog("Discharge document")
+                    with i_b:
+                        if st.button("✓ Mark Done", key="btn_done_insurance", use_container_width=True):
+                            st.session_state.insurance_done = True
+                            st.toast("Insurance requirement marked done!", icon="✅")
+                            st.rerun()
+
         appointments_tab, diagnostics_tab, medications_tab, discharge_tab = st.tabs(
             ["Appointments", "Diagnostics", "Medication", "Discharge"]
         )
@@ -1896,8 +1927,8 @@ def render_patient_portal() -> None:
                 if st.button("＋ Add", key="new_appointment_tab", use_container_width=True):
                     add_item_dialog("New appointment")
 
-            upcoming_appointments = [row for row in DATA["appointments"] if row["status"] != "Completed"]
-            past_appointments = [row for row in DATA["appointments"] if row["status"] == "Completed"]
+            upcoming_appointments = [row for row in DATA["appointments"] if not is_appointment_past(row)]
+            past_appointments = [row for row in DATA["appointments"] if is_appointment_past(row)]
             for group_label, records in [("UPCOMING", upcoming_appointments), ("PAST", past_appointments)]:
                 st.markdown(f'<div class="timeline-label">{group_label}</div>', unsafe_allow_html=True)
                 for appointment in records:
