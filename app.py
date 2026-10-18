@@ -545,11 +545,10 @@ def initialize_state() -> None:
                 "role": "assistant",
                 "content": (
                     "**Doctor Clinical Assistant Active**\n\n"
-                    "Upload a doctor's consultation note or prescription PDF, or click **Ingest Sample Note** below. "
-                    "The agent will extract clinical findings and automatically update the patient's summary, "
-                    "schedule follow-up appointments, add prescriptions to meal timings, and order diagnostics directly in Supabase."
+                    "Ask me about upcoming appointments, clinic offs and blocked slots, "
+                    "or your patients' clinical charts, active medications, and diagnostic records."
                 ),
-                "agent": "Clinical Ingestion Agent",
+                "agent": "Doctor Assistant Agent",
             }
         ]
 
@@ -749,9 +748,7 @@ def add_doctor_chat_message(prompt: str, doc_snapshot: dict[str, Any]) -> None:
             f"**Clinical Status Overview for {escape(doc_name)}:**\n\n"
             f"• **Today's OPD Consultations:** {today_cnt} patients scheduled\n"
             f"• **Weekly Workload:** {week_cnt} appointments on agenda (18–24 Oct 2026)\n"
-            f"• **Primary Inpatient/Follow-up:** Ananya Iyer (Day 8 Post-laparoscopic appendectomy)\n\n"
-            "To ingest a consultation note and auto-sync updates (summary, follow-up, medications, diagnostics), "
-            "upload a PDF or click **📑 Ingest Sample Note** below."
+            "You can ask about upcoming appointments, clinic offs and blocked slots, or your patients' clinical charts and medications."
         )
 
     st.session_state.doctor_messages.append({
@@ -2223,7 +2220,7 @@ def render_doctor_portal() -> None:
 
     with doc_right:
         st.markdown('<span class="right-panel-marker"></span>', unsafe_allow_html=True)
-        panel_header("Clinical Assistant", "", "RAG Consultation & EMR Sync")
+        panel_header("Clinical Assistant", "")
 
         doc_chat_box = st.container(border=False, key="doctor_chat_history")
         with doc_chat_box:
@@ -2240,10 +2237,10 @@ def render_doctor_portal() -> None:
         with st.container(key="doctor_chat_dock"):
             upload_col, form_col = st.columns([0.18, 1.18], gap="small")
             with upload_col:
-                with st.popover("", icon=":material/upload_file:", use_container_width=True, help="Upload Consultation Note (PDF) or Ingest Sample"):
-                    st.markdown("**Upload Consultation Note (PDF)**")
+                with st.popover("", icon=":material/upload_file:", use_container_width=True, help="Upload Clinical Document (PDF)"):
+                    st.markdown("**Upload Clinical Document (PDF)**")
                     uploaded_pdf = st.file_uploader(
-                        "Consultation PDF",
+                        "Clinical PDF",
                         type=["pdf"],
                         key="doc_pdf_uploader_widget",
                         label_visibility="collapsed",
@@ -2256,15 +2253,6 @@ def render_doctor_portal() -> None:
                                     file_name=uploaded_pdf.name,
                                 )
                                 st.rerun()
-                    st.divider()
-                    if st.button("📑 Ingest Sample Note (Day 8)", key="btn_ingest_sample_note", use_container_width=True, help="Load and auto-sync Dr. Rhea Mehta's Day 8 consultation note for Ananya Iyer"):
-                        with st.spinner("Extracting text and syncing consultation to Supabase..."):
-                            sample_bytes = generate_sample_consultation_pdf()
-                            handle_consultation_pdf_ingestion(
-                                sample_bytes,
-                                file_name="Dr_Rhea_Mehta_Consultation_18Oct2026.pdf",
-                            )
-                            st.rerun()
 
             with form_col:
                 with st.form("doctor_chat_form", clear_on_submit=True):
@@ -2272,7 +2260,7 @@ def render_doctor_portal() -> None:
                     with prompt_col:
                         doc_prompt = st.text_input(
                             "Message",
-                            placeholder="Ask clinical question or paste consultation note…",
+                            placeholder="Ask about appointments, offs, or patient details…",
                             label_visibility="collapsed",
                         )
                     with send_col:
@@ -2282,7 +2270,7 @@ def render_doctor_portal() -> None:
                             icon=":material/send:",
                             type="primary",
                             use_container_width=True,
-                            help="Send message or consultation note",
+                            help="Send message",
                         )
 
             if doc_submitted and doc_prompt.strip():
@@ -2293,7 +2281,7 @@ def render_doctor_portal() -> None:
                 "Today's appointments?",
                 "Ananya's current meds?",
                 "Summarize Ananya's recovery",
-                "Weekly clinic schedule",
+                "Weekly schedule & offs",
             ]
             with st.container(key="doc_suggestion_row"):
                 s_cols = st.columns(2, gap=None)
@@ -2302,11 +2290,6 @@ def render_doctor_portal() -> None:
                         if st.button(sugg, key=f"doc_sugg_{s_idx}", use_container_width=True):
                             add_doctor_chat_message(sugg, doc_snap)
                             st.rerun()
-
-            st.markdown(
-                '<div class="safety-note" style="border-left-color:var(--teal);"><strong>EMR RAG Sync:</strong> Consultation updates write directly to live Supabase clinical records.</div>',
-                unsafe_allow_html=True,
-            )
 
 
 # -----------------------------------------------------------------------------
