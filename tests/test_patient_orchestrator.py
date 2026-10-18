@@ -98,6 +98,35 @@ class TestPatientOrchestrator(unittest.TestCase):
             norm = normalize_appointment_status(raw)
             self.assertIn(norm, VALID_APPOINTMENT_STATUSES)
 
+    def test_medication_schedule_suggestion_query(self):
+        """Verify suggestion button query 'What meds do I take and when?' returns full organized medication schedule."""
+        res = run(self.orchestrator, "What meds do I take and when?", self.care_data, "22222222-2222-2222-2222-222222222222")
+        self.assertIn("medication schedule", res.message.lower())
+        self.assertIn("Pantocid 40", res.message)
+        self.assertIn("Dolo 650", res.message)
+        self.assertIn("Shelcal 500", res.message)
+        self.assertIn("Morning / Breakfast", res.message)
+        self.assertIn("Afternoon / Lunch", res.message)
+
+    def test_confirmation_inquiry_query(self):
+        """Verify asking whether agent can confirm appointment returns informative instructions rather than mutating or erroring."""
+        res = run(self.orchestrator, "Can I confirm appointment via agent?", self.care_data, "22222222-2222-2222-2222-222222222222")
+        self.assertIn("confirm", res.message.lower())
+        self.assertIn("Confirm appointment", res.message)
+        self.assertIn("Dr. Rhea Mehta", res.message)
+
+    def test_summary_agent_greeting(self):
+        """Verify saying 'Hello' returns personal care assistant greeting."""
+        res = run(self.orchestrator, "Hello", self.care_data, "22222222-2222-2222-2222-222222222222")
+        self.assertIn("Hello Ananya", res.message)
+        self.assertIn("personal care assistant", res.message)
+
+    def test_summary_agent_diagnosis(self):
+        """Verify asking 'What is my diagnosis?' returns clinical diagnosis details."""
+        res = run(self.orchestrator, "What is my diagnosis?", self.care_data, "22222222-2222-2222-2222-222222222222")
+        self.assertIn("Clinical Diagnosis", res.message)
+        self.assertIn("Appendicitis", res.message)
+
 
 if __name__ == "__main__":
     unittest.main()

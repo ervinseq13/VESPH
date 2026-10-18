@@ -15,6 +15,10 @@ PAST_QUERY_MARKERS = (
     "last consultation", "previous consultation", "past consultation",
     "earlier appointment", "notes from", "summary of my", "what took place",
     "what was discussed", "happened in", "happened at",
+    "adherence", "compliance", "prescribed vs taken", "how many taken", "did i take all",
+    "diagnosis", "my condition", "what's wrong with me",
+    "allergies", "allergy", "allergic", "trend", "trends", "recovery trend", "how am i healing",
+    "who is my doctor", "doctor profile", "tell me about dr",
 )
 
 REMINDER_TERMS = (
@@ -30,11 +34,14 @@ REMINDER_TERMS = (
     "this week at the hospital", "confirm my visit", "can i change the date",
     "reschedule", "rebook", "move my appointment", "cancel my visit",
     "postpone", "book", "confirm", "reminder", "visit", "clinic", "checkup",
+    "can i confirm", "how do i confirm", "able to confirm", "confirm via agent",
     # Medication timing & intake reports
-    "when do i take", "next dose", "did i take my", "morning pills",
+    "meds", "my meds", "what meds", "what meds do i take", "what meds do i take and when",
+    "medicines", "my medicines", "medication", "when do i take", "how do i take",
+    "next dose", "did i take my", "morning pills", "pills", "tablet", "tablets",
     "evening meds", "what meds with breakfast", "what meds with lunch",
     "what meds with dinner", "should i take it now", "medication reminder",
-    "took my medicine", "haven't taken", "forgot my meds", "pill", "tablet",
+    "took my medicine", "haven't taken", "forgot my meds", "pill",
     "i took", "took dolo", "took pantocid", "took meds", "took my", "taken", "dolo", "pantocid",
     # Diagnostic scheduling reminders
     "blood test before", "get a test done", "lab before my appointment",
@@ -81,16 +88,57 @@ def _handle(
 
     # Branch 2: Medication timing & meal check reminders / intake reports
     elif any(term in text for term in (
-        "next dose", "when do i take", "medication reminder", "morning pills",
-        "evening meds", "what meds with breakfast", "what meds with lunch",
-        "what meds with dinner", "did i take", "took my", "forgot my", "medicine",
-        "i took", "took dolo", "took pantocid", "took meds", "taken", "dolo", "pantocid"
+        "med", "meds", "medicine", "medication", "pill", "pills", "tablet", "tablets",
+        "inhaler", "dose", "dosage", "when do i take", "how do i take", "what meds",
+        "what meds do i take", "take and when", "my meds", "morning pills", "evening meds",
+        "what meds with breakfast", "what meds with lunch", "what meds with dinner",
+        "did i take", "took my", "forgot my", "i took", "took dolo", "took pantocid",
+        "took meds", "taken", "dolo", "pantocid", "shelcal", "budecort", "next dose"
     )):
         meds = data.get("medications", [])
         b_meds = [m for m in meds if m.get("meal_timing") == "breakfast"]
         l_meds = [m for m in meds if m.get("meal_timing") == "lunch"]
         d_meds = [m for m in meds if m.get("meal_timing") == "dinner"]
+        other_meds = [m for m in meds if m.get("meal_timing") not in ("breakfast", "lunch", "dinner")]
 
+        is_schedule_query = any(k in text for k in ["what meds", "and when", "all meds", "schedule", "my meds", "what medicines", "what do i take", "medication list"]) and not any(k in text for k in ["breakfast", "morning", "lunch", "afternoon", "dinner", "night", "next dose", "took", "taken"])
+
+        if is_schedule_query and meds:
+            lines = ["Here is your active medication schedule organized by meal timing:\n"]
+            if b_meds:
+                lines.append("🌅 **Morning / Breakfast:**")
+                for m in b_meds:
+                    st_str = "Taken ✓" if m.get("is_taken") else "Pending"
+                    lines.append(f"• **{m['name']}** ({m.get('dosage', '')}): {m.get('instruction', '')} *(Status: {st_str})*")
+                lines.append("")
+            if l_meds:
+                lines.append("☀️ **Afternoon / Lunch:**")
+                for m in l_meds:
+                    st_str = "Taken ✓" if m.get("is_taken") else "Pending"
+                    lines.append(f"• **{m['name']}** ({m.get('dosage', '')}): {m.get('instruction', '')} *(Status: {st_str})*")
+                lines.append("")
+            if d_meds:
+                lines.append("🌙 **Night / Dinner:**")
+                for m in d_meds:
+                    st_str = "Taken ✓" if m.get("is_taken") else "Pending"
+                    lines.append(f"• **{m['name']}** ({m.get('dosage', '')}): {m.get('instruction', '')} *(Status: {st_str})*")
+                lines.append("")
+            if other_meds:
+                lines.append("📋 **Other / As Needed (SOS):**")
+                for m in other_meds:
+                    st_str = "Taken ✓" if m.get("is_taken") else "Pending"
+                    lines.append(f"• **{m['name']}** ({m.get('dosage', '')}): {m.get('instruction', '')} *(Status: {st_str})*")
+                lines.append("")
+
+            lines.append("💡 *Tip: You can confirm doses directly in your Medications tab or by letting me know in this chat (e.g., “I took my lunch meds”).*")
+            return {
+                "message": "\n".join(lines).strip(),
+                "agent": "Reminder Agent · Medication Timing",
+                "escalated": False,
+                "escalation": None,
+            }
+
+        # Otherwise handle meal-specific query, intake report, or next pending dose
         if "breakfast" in text or "morning" in text:
             target_list = b_meds
             meal_name = "Breakfast (Morning)"
@@ -144,9 +192,18 @@ def _handle(
             appt_doc = appointment.get("doctor", "Dr. Rhea Mehta")
             appt_loc = appointment.get("location", "OPD Wing B, Room 304")
             appt_prep = appointment.get("preparation", "Bring previous surgical discharge summary and lab reports")
-            
-            # Check if appointment is pending re-confirmation due to doctor reschedule
-            if "Reschedule" in appt_status or "Pending" in appt_status:
+
+            # Check if this is an inquiry about whether the user can confirm via agent
+            is_confirm_inquiry = any(q in text for q in ["can i confirm", "able to confirm", "how do i confirm", "how to confirm", "agent confirm", "via agent", "confirm via", "can the agent", "is the user able"])
+            if is_confirm_inquiry:
+                message = (
+                    f"Yes, absolutely! You can confirm your appointment attendance directly with me right here in this chat "
+                    f"(simply say **“Confirm appointment”** or **“Confirm my slot”**), or click the **“✓ Confirm Slot”** button "
+                    f"on your appointment card in the Notification Centre.\n\n"
+                    f"Your upcoming visit is with **{appt_doc}** on **{appt_date} at {appt_time}** in {appt_loc} "
+                    f"(Current status: *{appt_status}*)."
+                )
+            elif "Reschedule" in appt_status or "Pending" in appt_status:
                 message = (
                     f"⚠️ **Action Required – Appointment Rescheduled:**\n\n"
                     f"Dr. Rhea Mehta had a schedule adjustment, and your {appointment.get('type', 'Follow-up')} "

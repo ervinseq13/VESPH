@@ -847,14 +847,19 @@ def add_chat_message(prompt: str) -> None:
             return
 
     # Appointment confirmation detection from patient chat (e.g. "confirm appointment", "confirm slot", "yes confirm")
-    is_appt_confirm = (
+    is_inquiry = any(q in lowered for q in [
+        "can i", "is it", "how do", "how to", "able to", "should i", "where do",
+        "what if", "why", "who", "when can", "is the user able", "can an agent",
+        "can the agent", "can you confirm", "does it", "is there", "?"
+    ])
+    is_appt_confirm = not is_inquiry and (
         any(phrase in lowered for phrase in [
             "confirm appointment", "confirm my appointment", "confirm slot", "confirm my slot",
             "confirm the appointment", "confirm booking", "confirm my booking", "confirm visit",
             "confirm attendance", "accept slot", "confirm reschedule", "confirm the reschedule",
             "yes confirm", "please confirm", "confirm date", "confirm my visit"
         ]) or (
-            "confirm" in lowered and any(k in lowered for k in ["appointment", "slot", "schedule", "reschedule", "booking", "visit", "attendance"])
+            "confirm" in lowered and any(k in lowered for k in ["appointment", "slot", "schedule", "reschedule", "booking", "visit", "attendance"]) and not any(k in lowered for k in ["how", "why", "what", "can", "if"])
         )
     ) and not any(neg in lowered for neg in ["don't", "do not", "cancel", "cannot", "can't"])
 
@@ -888,6 +893,7 @@ def add_chat_message(prompt: str) -> None:
                 pass
 
             record_activity_update("Confirmed appointment via care assistant")
+            st.session_state._loaded_patient_id = None
             st.session_state._patient_data_id = None
 
             appt_title = target_a.get("type", "Appointment")
@@ -1899,6 +1905,7 @@ def patient_clinical_chart_dialog(patient_id: str, appointment_data: dict | None
 
 def render_patient_portal() -> None:
     patient = DATA["patient"]
+    patient_id = patient["id"]
     left, middle, right = st.columns([1, 1.8, 0.92], gap="medium")
 
     with left:
@@ -2116,6 +2123,7 @@ def render_patient_portal() -> None:
                                 except Exception:
                                     pass
                                 record_activity_update("Confirmed appointment attendance")
+                                st.session_state._loaded_patient_id = None
                                 st.session_state._patient_data_id = None
                                 st.session_state.messages.append(
                                     {
