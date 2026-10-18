@@ -407,12 +407,12 @@ div[data-testid="stTextInput"] div:has(> [data-testid="InputInstructions"]) {
   pointer-events: none !important;
 }
 
-/* Agenda Card Click Interaction & Day Headers */
-div[data-testid="stVerticalBlock"]:has(.agenda-card-wrapper) {
+/* Agenda Card Click Interaction */
+[class*="st-key-agenda_box_"] {
   position: relative !important;
   margin-bottom: 6px !important;
 }
-div[data-testid="stVerticalBlock"]:has(.agenda-card-wrapper) button {
+[class*="st-key-agenda_box_"] button {
   position: absolute !important;
   top: 0 !important;
   left: 0 !important;
@@ -422,7 +422,7 @@ div[data-testid="stVerticalBlock"]:has(.agenda-card-wrapper) button {
   z-index: 10 !important;
   cursor: pointer !important;
 }
-div[data-testid="stVerticalBlock"]:has(.agenda-card-wrapper):hover .agenda-card {
+[class*="st-key-agenda_box_"]:hover .agenda-card {
   border-color: #0B6E69 !important;
   box-shadow: 0 4px 16px rgba(11, 110, 105, 0.14) !important;
   transform: translateY(-1px);
@@ -2348,7 +2348,7 @@ def render_doctor_portal() -> None:
         }
         week_keys = list(week_options_map.keys())
 
-        hdr_col, week_col, btn_col = st.columns([1.55, 0.8, 0.82], gap="small")
+        hdr_col, week_col, btn_col = st.columns([1.25, 0.85, 0.95], gap="small", vertical_alignment="bottom")
         with hdr_col:
             panel_header(
                 "Doctor Appointment Agenda",
@@ -2356,7 +2356,6 @@ def render_doctor_portal() -> None:
                 "Click on any appointment card to view patient's clinical chart.",
             )
         with week_col:
-            st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
             week_choice = st.selectbox(
                 "Week",
                 week_keys,
@@ -2365,7 +2364,6 @@ def render_doctor_portal() -> None:
                 key="doc_agenda_week_choice",
             )
         with btn_col:
-            st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
             if st.button("＋ Schedule Appointment", key="doc_add_appt_btn", type="primary", use_container_width=True):
                 doctor_book_appointment_dialog(doc_id)
 
@@ -2427,7 +2425,7 @@ def render_doctor_portal() -> None:
                 status_badge_class = "status" if appt_status == "Confirmed" else ("status wait" if "Reschedule" in appt_status or "Unavailable" in appt_status else "status old")
                 notice_html = f'<div class="rebook-notice">⚠️ <strong>Notice:</strong> {escape(rebook_notice)}</div>' if rebook_notice else ""
 
-                with st.container():
+                with st.container(key=f"agenda_box_{idx}"):
                     st.markdown('<div class="agenda-card-wrapper">', unsafe_allow_html=True)
                     st.markdown(
                         f"""
