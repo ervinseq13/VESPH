@@ -1005,11 +1005,6 @@ def reset_supabase_database(client: Client) -> None:
         "22222222-2222-2222-2222-222222222228",  # Kavita Nair
     ]
 
-    try:
-        client.table("doctor_unavailability").delete().neq("unavailability_id", "00000000-0000-0000-0000-000000000000").execute()
-    except Exception:
-        pass
-
     for p_id_to_del in patient_ids:
         try:
             client.table("escalation_agent_data").delete().eq("patient_id", p_id_to_del).execute()
@@ -1019,13 +1014,16 @@ def reset_supabase_database(client: Client) -> None:
         try:
             orders = client.table("diagnostics").select("order_id").eq("patient_id", p_id_to_del).execute().data or []
             for o in orders:
-                client.table("diagnostics_results").delete().eq("order_id", o["order_id"]).execute()
+                try:
+                    client.table("diagnostics_results").delete().eq("order_id", o["order_id"]).execute()
+                except Exception:
+                    pass
         except Exception:
             pass
 
         for table_name in [
-            "diagnostics",
             "prescription_details",
+            "diagnostics",
             "consultations",
             "operation",
             "payment_details",
@@ -1035,6 +1033,11 @@ def reset_supabase_database(client: Client) -> None:
                 client.table(table_name).delete().eq("patient_id", p_id_to_del).execute()
             except Exception:
                 pass
+
+    try:
+        client.table("doctor_unavailability").delete().neq("unavailability_id", "00000000-0000-0000-0000-000000000000").execute()
+    except Exception:
+        pass
 
     pid = "22222222-2222-2222-2222-222222222222"
     pid2 = "22222222-2222-2222-2222-222222222223"
@@ -1212,7 +1215,7 @@ def reset_supabase_database(client: Client) -> None:
     pid7 = "22222222-2222-2222-2222-222222222228"
 
     # 5. Appointments (Dr. Rhea Mehta full weekly schedule 18-24 Oct 2026 & history)
-    client.table("appointments").insert([
+    client.table("appointments").upsert([
         # Sunday 18 Oct 2026
         {
             "appointment_id": "33333333-3333-3333-3333-333333333333",
@@ -1476,7 +1479,7 @@ def reset_supabase_database(client: Client) -> None:
     ]).execute()
 
     # 6. Consultations
-    client.table("consultations").insert([
+    client.table("consultations").upsert([
         {
             "consultation_id": "55555555-5555-5555-5555-555555555555",
             "appointment_id": "33333333-3333-3333-3333-333333333331",
@@ -1701,7 +1704,7 @@ def reset_supabase_database(client: Client) -> None:
     ]).execute()
 
     # 7. Prescriptions with meal_timing
-    client.table("prescription_details").insert([
+    client.table("prescription_details").upsert([
         # Ananya Sharma's medications
         {
             "prescription_item_id": "66666666-6666-6666-6666-666666666671",
@@ -1894,7 +1897,7 @@ def reset_supabase_database(client: Client) -> None:
     ]).execute()
 
     # 8. Diagnostics & Results
-    client.table("diagnostics").insert([
+    client.table("diagnostics").upsert([
         {"order_id": "77777777-7777-7777-7777-777777777771", "appointment_id": "33333333-3333-3333-3333-333333333331", "consultation_id": "55555555-5555-5555-5555-555555555555", "patient_id": pid, "ordered_by_doctor_id": "11111111-1111-1111-1111-111111111111", "order_status": "Ready", "order_datetime": "2026-10-16 08:30:00"},
         {"order_id": "77777777-7777-7777-7777-777777772401", "appointment_id": "33333333-3333-3333-3333-333333332402", "consultation_id": "55555555-5555-5555-5555-555555552402", "patient_id": pid, "ordered_by_doctor_id": "11111111-1111-1111-1111-111111111113", "order_status": "Ready", "order_datetime": "2024-11-15 15:00:00"},
         {"order_id": "77777777-7777-7777-7777-777777772302", "appointment_id": "33333333-3333-3333-3333-333333332302", "consultation_id": "55555555-5555-5555-5555-555555552302", "patient_id": pid, "ordered_by_doctor_id": "11111111-1111-1111-1111-111111111112", "order_status": "Ready", "order_datetime": "2023-10-18 16:30:00"},
@@ -1907,7 +1910,7 @@ def reset_supabase_database(client: Client) -> None:
         {"order_id": "77777777-7777-7777-7777-777777772607", "appointment_id": "33333333-3333-3333-3333-333333334004", "consultation_id": "55555555-5555-5555-5555-555555555561", "patient_id": pid7, "ordered_by_doctor_id": "11111111-1111-1111-1111-111111111111", "order_status": "Ready", "order_datetime": "2026-10-16 17:00:00"},
     ]).execute()
 
-    client.table("diagnostics_results").insert([
+    client.table("diagnostics_results").upsert([
         {"result_id": "77777777-7777-7777-7777-777777777781", "order_id": "77777777-7777-7777-7777-777777777771", "test_category": "Blood Work", "test_name": "Complete Blood Count (CBC)", "result_value": "10.4 x10^3/uL", "reference_range": "4.5 - 11.0 x10^3/uL", "result_summary": "White blood count is 10.4 x10^3/uL, within normal recovery range. Trending down from post-op day 1 (14.2).", "report_file_url": "https://reports.vesphcare.com/lab/cbc-16oct.pdf", "result_datetime": "2026-10-16 12:00:00"},
         {"result_id": "77777777-7777-7777-7777-777777777782", "order_id": "77777777-7777-7777-7777-777777777771", "test_category": "Specialized", "test_name": "Appendix Histopathology", "result_value": "Acute appendicitis confirmed", "reference_range": "Normal lymphoid appendix", "result_summary": "Specimen shows acute transmural inflammation consistent with uncomplicated acute appendicitis. Margins clear.", "report_file_url": "https://reports.vesphcare.com/lab/histo-10oct.pdf", "result_datetime": "2026-10-10 16:00:00"},
         {"result_id": "77777777-7777-7777-7777-777777772481", "order_id": "77777777-7777-7777-7777-777777772401", "test_category": "Blood Work", "test_name": "Serum Ferritin & Iron Panel", "result_value": "Ferritin 18 ng/mL", "reference_range": "20 - 200 ng/mL", "result_summary": "Serum Ferritin is 18 ng/mL, indicating mild iron depletion. Serum Iron: 54 ug/dL, Total Iron Binding Capacity: 380 ug/dL.", "report_file_url": "https://reports.vesphcare.com/lab/iron-nov2024.pdf", "result_datetime": "2024-11-15 17:30:00"},
@@ -1922,7 +1925,7 @@ def reset_supabase_database(client: Client) -> None:
     ]).execute()
 
     # 9. Operation
-    client.table("operation").insert({
+    client.table("operation").upsert({
         "operation_id": "44444444-4444-4444-4444-444444444444",
         "patient_id": pid,
         "lead_surgeon_id": "11111111-1111-1111-1111-111111111111",
@@ -1936,7 +1939,7 @@ def reset_supabase_database(client: Client) -> None:
     }).execute()
 
     # 10. Payment
-    client.table("payment_details").insert({
+    client.table("payment_details").upsert({
         "payment_id": "88888888-8888-8888-8888-888888888881",
         "patient_id": pid,
         "billing_amount": 48500.00,

@@ -92,15 +92,14 @@ html, body, [class*="css"] { font-family: "DM Sans", sans-serif; }
 .stApp { background: var(--canvas); color: var(--ink); }
 .block-container {
   max-width: 1760px;
-  padding-top: 2.85rem !important;
-  padding-bottom: 2.2rem !important;
+  padding-top: 0.85rem !important;
+  padding-bottom: 0.4rem !important;
   padding-left: 1.25rem !important;
   padding-right: 1.25rem !important;
 }
 [data-testid="stHeader"] {
-  background: rgba(244,247,246,.94);
-  height: 2.6rem;
-  z-index: 50;
+  display: none !important;
+  height: 0 !important;
 }
 [data-testid="stToolbar"] { right: 1rem; }
 h1, h2, h3 { font-family: "Manrope", sans-serif !important; letter-spacing: -.02em; }
@@ -237,11 +236,11 @@ div[data-testid="stMetricValue"] { font-size:16px; }
 
 @media (min-width: 901px) {
   .block-container {
-    min-height: calc(100vh - 2.85rem);
-    padding-bottom: 2.5rem !important;
+    min-height: calc(100vh - 1.2rem);
+    padding-bottom: 0.4rem !important;
   }
   [data-testid="stColumn"]:has(.left-panel-marker) {
-    max-height: calc(100vh - 6.2rem);
+    max-height: calc(100vh - 4.5rem);
     overflow-y: auto;
     scrollbar-gutter: stable;
     padding-right: 4px;
@@ -250,21 +249,22 @@ div[data-testid="stMetricValue"] { font-size:16px; }
     overflow: visible;
   }
   [data-testid="stColumn"]:has(.middle-panel-marker) .stTabs [role="tabpanel"] {
-    height: calc(100vh - 360px);
-    min-height: 260px;
+    height: calc(100vh - 220px);
+    max-height: calc(100vh - 220px);
+    min-height: 240px;
     overflow-y: auto;
     scrollbar-gutter: stable;
     padding-right: 4px;
   }
   [data-testid="stColumn"]:has(.right-panel-marker) {
     position: relative;
-    max-height: calc(100vh - 6.2rem);
+    max-height: calc(100vh - 4.5rem);
   }
   .stApp .st-key-chat_history,
   .stApp .st-key-doctor_chat_history {
-    height: calc(100vh - 225px) !important;
-    min-height: 520px !important;
-    max-height: calc(100vh - 225px) !important;
+    height: calc(100vh - 285px) !important;
+    min-height: 240px !important;
+    max-height: calc(100vh - 285px) !important;
     overflow-y: auto !important;
     padding-bottom: 6px;
   }
@@ -281,7 +281,35 @@ div[data-testid="stMetricValue"] { font-size:16px; }
   .st-key-doctor_chat_dock [data-testid="stForm"] { margin: 0 !important; padding: 0 !important; }
   .st-key-chat_dock .safety-note,
   .st-key-doctor_chat_dock .safety-note { margin-top: 4px !important; }
-  .footer-note { display: block; margin-top: 14px; text-align: center; font-size: 10px; color: #7D8F8C; }
+  .footer-note { display: block; margin-top: 6px !important; margin-bottom: 2px !important; text-align: center; font-size: 10px; color: #7D8F8C; }
+}
+
+/* Tighten spacing between top bar and content grid */
+.stApp [data-testid="stVerticalBlock"]:has(> [data-testid="stHorizontalBlock"]) {
+  gap: 0.35rem !important;
+}
+
+/* Top bar reset button pill styling */
+.st-key-top_reset_db_btn button {
+  border-radius: 999px !important;
+  background: #FFFFFF !important;
+  border: 1px solid #94D3C5 !important;
+  color: #075651 !important;
+  font-weight: 700 !important;
+  font-size: 11px !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  padding: 0 16px !important;
+  box-shadow: 0 1px 3px rgba(23,53,50,0.06) !important;
+  transition: all 0.15s ease-in-out !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+.st-key-top_reset_db_btn button:hover {
+  background: #E6F4F1 !important;
+  border-color: #075651 !important;
+  color: #043834 !important;
 }
 
 /* Suppress Streamlit's "Press Enter to submit form" overlay popup in text inputs */
@@ -297,11 +325,11 @@ div[data-testid="stTextInput"] div:has(> [data-testid="InputInstructions"]) {
 }
 
 /* Agenda Card Click Interaction & Day Headers */
-div[data-testid="stVerticalBlock"]:has(> div > .agenda-card-wrapper) {
+div[data-testid="stVerticalBlock"]:has(.agenda-card-wrapper) {
   position: relative !important;
   margin-bottom: 6px !important;
 }
-div[data-testid="stVerticalBlock"]:has(> div > .agenda-card-wrapper) button {
+div[data-testid="stVerticalBlock"]:has(.agenda-card-wrapper) button {
   position: absolute !important;
   top: 0 !important;
   left: 0 !important;
@@ -311,7 +339,7 @@ div[data-testid="stVerticalBlock"]:has(> div > .agenda-card-wrapper) button {
   z-index: 10 !important;
   cursor: pointer !important;
 }
-div[data-testid="stVerticalBlock"]:has(> div > .agenda-card-wrapper):hover .agenda-card {
+div[data-testid="stVerticalBlock"]:has(.agenda-card-wrapper):hover .agenda-card {
   border-color: #0B6E69 !important;
   box-shadow: 0 4px 16px rgba(11, 110, 105, 0.14) !important;
   transform: translateY(-1px);
@@ -1569,13 +1597,6 @@ def render_patient_portal() -> None:
             '<div class="safety-note">This view summarizes hospital records. It does not replace your doctor or provide a diagnosis.</div>',
             unsafe_allow_html=True,
         )
-        st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
-        if st.button("↺ Reset Database & State", key="reset_db_btn", use_container_width=True, help="Reset Supabase database and session state back to canonical baseline"):
-            with st.spinner("Restoring Supabase database to baseline..."):
-                reset_supabase_database(INTEGRATIONS.supabase_client())
-                st.session_state.clear()
-                st.toast("Database and session reset to baseline!", icon="✅")
-                st.rerun()
 
     with middle:
         st.markdown('<span class="middle-panel-marker"></span>', unsafe_allow_html=True)
@@ -2299,12 +2320,12 @@ if st.session_state.get("doctor_toast"):
     msg, ic = st.session_state.pop("doctor_toast")
     st.toast(msg, icon=ic)
 
-top_bar_col1, top_bar_col2, top_bar_col_reset, top_bar_col3 = st.columns([1.1, 1.15, 0.75, 1.1], gap="small")
+top_bar_col1, top_bar_col2, top_bar_col_reset, top_bar_col3 = st.columns([1.15, 1.25, 0.7, 1.1], gap="small", vertical_alignment="center")
 
 with top_bar_col1:
     st.markdown(
         """
-        <div style="display:flex; align-items:center; gap:10px; padding:3px 0;">
+        <div style="display:flex; align-items:center; gap:10px; padding:2px 0;">
           <div class="brand-mark" style="width:34px; height:34px; font-size:18px;">✚</div>
           <div>
             <div style="font:700 16px/1.2 'Manrope',sans-serif; color:var(--ink);">VESPH Care</div>
@@ -2332,20 +2353,22 @@ with top_bar_col2:
         st.rerun()
 
 with top_bar_col_reset:
-    st.markdown("<div style='height:2px;'></div>", unsafe_allow_html=True)
     if st.button("↺ Reset DB", key="top_reset_db_btn", use_container_width=True, help="Reset Supabase database & state back to baseline"):
         with st.spinner("Restoring Supabase database to baseline..."):
-            reset_supabase_database(INTEGRATIONS.supabase_client())
-            st.session_state.clear()
-            st.toast("Database and session reset to baseline!", icon="✅")
-            st.rerun()
+            try:
+                reset_supabase_database(INTEGRATIONS.supabase_client())
+                st.session_state.clear()
+                st.toast("Database and session reset to baseline!", icon="✅")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error resetting database: {e}")
 
 with top_bar_col3:
     if st.session_state.portal_mode == "patient":
         st.session_state.active_patient_id = "22222222-2222-2222-2222-222222222222"
         st.markdown(
             f"""
-            <div style="display:flex; justify-content:flex-end; align-items:center; height:100%; padding-top:2px;">
+            <div style="display:flex; justify-content:flex-end; align-items:center; height:100%;">
               <div style="background:#E6F4F1; border:1px solid #94D3C5; border-radius:999px; padding:6px 14px; font-size:12px; font-weight:700; color:#075651; display:flex; align-items:center; gap:6px;">
                 <span>👤</span>
                 <span>Ananya Iyer · {short_patient_id(st.session_state.active_patient_id)}</span>
@@ -2358,7 +2381,7 @@ with top_bar_col3:
         st.session_state.active_doctor_id = "11111111-1111-1111-1111-111111111111"
         st.markdown(
             f"""
-            <div style="display:flex; justify-content:flex-end; align-items:center; height:100%; padding-top:2px;">
+            <div style="display:flex; justify-content:flex-end; align-items:center; height:100%;">
               <div style="background:#E6F4F1; border:1px solid #94D3C5; border-radius:999px; padding:6px 14px; font-size:12px; font-weight:700; color:#075651; display:flex; align-items:center; gap:6px;">
                 <span>🩺</span>
                 <span>Dr. Rhea Mehta · {short_doctor_id(st.session_state.active_doctor_id)}</span>
@@ -2367,8 +2390,6 @@ with top_bar_col3:
             """,
             unsafe_allow_html=True,
         )
-
-st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
 
 if st.session_state.portal_mode == "patient":
     render_patient_portal()
