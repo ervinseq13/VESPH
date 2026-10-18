@@ -372,6 +372,32 @@ div[data-testid="stRadio"]:has(input[name*="doc_agenda_week_choice"]) label:has(
   white-space: pre-line !important;
 }
 
+/* Schedule a new appointment 2-line button */
+.st-key-doc_add_appt_btn button {
+  height: 52px !important;
+  min-height: 52px !important;
+  padding: 4px 6px !important;
+  font-size: 11px !important;
+  line-height: 1.25 !important;
+  white-space: pre-line !important;
+  text-align: center !important;
+}
+.st-key-doc_add_appt_btn button p {
+  font-size: 11px !important;
+  line-height: 1.25 !important;
+  text-align: center !important;
+  margin: 0 !important;
+  white-space: pre-line !important;
+}
+
+/* Week label styling */
+.st-key-doc_agenda_week_choice label p {
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  color: var(--ink) !important;
+  margin-bottom: 2px !important;
+}
+
 /* Top bar reset button pill styling */
 .st-key-top_reset_db_btn button {
   border-radius: 999px !important;
@@ -2240,7 +2266,7 @@ def render_doctor_portal() -> None:
     doc_id = doc.get("id") or doc.get("doctor_id") or st.session_state.get("active_doctor_id", "11111111-1111-1111-1111-111111111111")
     doc_specialization = doc.get("specialization") or doc.get("qualifications", "General Surgery Specialist")
 
-    doc_left, doc_main, doc_right = st.columns([0.88, 1.35, 1.05], gap="medium")
+    doc_left, doc_main, doc_right = st.columns([0.82, 1.48, 0.98], gap="medium")
 
     with doc_left:
         st.markdown('<span class="left-panel-marker"></span>', unsafe_allow_html=True)
@@ -2348,7 +2374,7 @@ def render_doctor_portal() -> None:
         }
         week_keys = list(week_options_map.keys())
 
-        hdr_col, week_col, btn_col = st.columns([1.25, 0.85, 0.95], gap="small", vertical_alignment="bottom")
+        hdr_col, week_col, btn_col = st.columns([1.1, 0.95, 0.95], gap="small", vertical_alignment="center")
         with hdr_col:
             panel_header(
                 "Doctor Appointment Agenda",
@@ -2357,14 +2383,13 @@ def render_doctor_portal() -> None:
             )
         with week_col:
             week_choice = st.selectbox(
-                "Week",
+                "Week:",
                 week_keys,
                 index=1,
-                label_visibility="collapsed",
                 key="doc_agenda_week_choice",
             )
         with btn_col:
-            if st.button("＋ Schedule Appointment", key="doc_add_appt_btn", type="primary", use_container_width=True):
+            if st.button("＋ Schedule a\nnew appointment", key="doc_add_appt_btn", type="primary", use_container_width=True):
                 doctor_book_appointment_dialog(doc_id)
 
         # ── Day selector: 2 rows of buttons (Mon–Thu row 1, Fri–Sun row 2) ──
