@@ -354,6 +354,24 @@ div[data-testid="stRadio"]:has(input[name*="doc_agenda_week_choice"]) label:has(
   border-color: #0B6E69 !important;
 }
 
+/* Doctor agenda 1-row 7-day selector buttons */
+[class*="st-key-daybtn_"] button {
+  height: 52px !important;
+  min-height: 52px !important;
+  padding: 3px 2px !important;
+  font-size: 10px !important;
+  line-height: 1.25 !important;
+  white-space: pre-line !important;
+  text-align: center !important;
+}
+[class*="st-key-daybtn_"] button p {
+  font-size: 10px !important;
+  line-height: 1.25 !important;
+  text-align: center !important;
+  margin: 0 !important;
+  white-space: pre-line !important;
+}
+
 /* Top bar reset button pill styling */
 .st-key-top_reset_db_btn button {
   border-radius: 999px !important;
@@ -1170,6 +1188,7 @@ def record_detail_dialog(record_type: str, record: dict) -> None:
             st.info(record["preparation"])
         is_past = is_appointment_past(record)
         if not is_past:
+            reschedule_key = f"inline_reschedule_{record['id']}"
             if record.get("status") not in ("Confirmed", "Completed", "Cancelled"):
                 col_cf, col_rs = st.columns(2)
                 with col_cf:
@@ -1184,10 +1203,60 @@ def record_detail_dialog(record_type: str, record: dict) -> None:
                         st.rerun()
                 with col_rs:
                     if st.button("Reschedule", key=f"dlg_rs_{record['id']}", use_container_width=True):
-                        reschedule_dialog()
+                        st.session_state[reschedule_key] = not st.session_state.get(reschedule_key, False)
+                        st.rerun()
             else:
                 if st.button("Reschedule", key=f"dlg_rs_{record['id']}", use_container_width=True):
-                    reschedule_dialog()
+                    st.session_state[reschedule_key] = not st.session_state.get(reschedule_key, False)
+                    st.rerun()
+
+            if st.session_state.get(reschedule_key, False):
+                st.markdown("---")
+                st.markdown("##### 📅 Select New Date & Timeslot")
+                target_doctor = record.get("doctor")
+                doc_options = [row for row in DATA["appointment_schedule"] if row["doctor"] == target_doctor]
+                options = doc_options if doc_options else DATA["appointment_schedule"]
+                labels = [f"{row['date']} · {row['doctor']} ({row.get('department', 'General Surgery')})" for row in options]
+                if labels:
+                    sel_label = st.selectbox("Choose date & doctor", labels, key=f"sel_lbl_{record['id']}")
+                    sel_slot_row = options[labels.index(sel_label)]
+                    available_slots = sel_slot_row.get("slots", [])
+                    if not available_slots:
+                        st.warning("No timeslots currently open for this date. Please choose another date.")
+                    else:
+                        chosen_time = st.selectbox("Available timeslot", available_slots, key=f"sel_time_{record['id']}")
+                        rs_note = st.text_input("Anything the care team should know? (Optional)", placeholder="e.g. Prefer morning slot", key=f"sel_note_{record['id']}")
+                        if st.button("Confirm Reschedule", key=f"btn_confirm_rs_{record['id']}", type="primary", use_container_width=True):
+                            record_activity_update("Rescheduled appointment")
+                            record.update({
+                                "date": sel_slot_row["date"],
+                                "time": chosen_time,
+                                "doctor": sel_slot_row["doctor"],
+                                "status": "Confirmed",
+                                "request_note": rs_note if rs_note else None,
+                            })
+                            if chosen_time in sel_slot_row.get("slots", []):
+                                sel_slot_row["slots"].remove(chosen_time)
+                            try:
+                                update_appointment_in_supabase(
+                                    INTEGRATIONS.supabase_client(),
+                                    record["id"],
+                                    "Confirmed",
+                                    new_date=sel_slot_row["date"],
+                                    new_time=chosen_time,
+                                )
+                            except Exception:
+                                pass
+                            st.session_state.messages.append({
+                                "role": "assistant",
+                                "content": f"Your appointment with {sel_slot_row['doctor']} has been rescheduled and automatically confirmed for {sel_slot_row['date']} at {chosen_time}.",
+                                "agent": "Reminder Agent · Scheduling",
+                            })
+                            st.session_state[reschedule_key] = False
+                            st.toast(f"Appointment rescheduled & confirmed for {sel_slot_row['date']} at {chosen_time}!", icon="✅")
+                            st.rerun()
+                else:
+                    st.warning("No alternate schedule dates available.")
         filename = f"{record['id']}.txt"
     elif record_type == "diagnostic_booking":
         st.subheader(record["test"])
@@ -1248,27 +1317,32 @@ def record_detail_dialog(record_type: str, record: dict) -> None:
         st.write(record["note"])
         filename = "discharge-upload.txt"
 
+    # Only show download for past/completed appointments, not upcoming ones
+    show_download = True
+    if record_type == "appointment" and not is_appointment_past(record):
+        show_download = False
     pdf_filename = filename.rsplit(".", 1)[0] + ".pdf"
-    try:
-        pdf_data = generate_record_pdf(record, record_type, DATA["patient"]["name"])
-        st.download_button(
-            "Download PDF",
-            data=pdf_data,
-            file_name=pdf_filename,
-            mime="application/pdf",
-            icon=":material/download:",
-            use_container_width=True,
-        )
-    except Exception:
-        download_data = "\n".join(f"{key}: {value}" for key, value in record.items())
-        st.download_button(
-            "Download record",
-            data=download_data,
-            file_name=filename,
-            mime="text/plain",
-            icon=":material/download:",
-            use_container_width=True,
-        )
+    if show_download:
+        try:
+            pdf_data = generate_record_pdf(record, record_type, DATA["patient"]["name"])
+            st.download_button(
+                "Download PDF",
+                data=pdf_data,
+                file_name=pdf_filename,
+                mime="application/pdf",
+                icon=":material/download:",
+                use_container_width=True,
+            )
+        except Exception:
+            download_data = "\n".join(f"{key}: {value}" for key, value in record.items())
+            st.download_button(
+                "Download record",
+                data=download_data,
+                file_name=filename,
+                mime="text/plain",
+                icon=":material/download:",
+                use_container_width=True,
+            )
 
 
 def record_card(
@@ -1758,10 +1832,12 @@ def render_patient_portal() -> None:
             active_meal = "Dinner"
             active_meds = untaken_d
         else:
-            active_meal = "Daily Routine"
-            active_meds = []
+            # All meds marked taken in DB — still show a summary reminder unless user dismissed this session
+            active_meal = "Today"
+            active_meds = meds_list  # Show all meds in the card when none are pending
 
-        show_med_check = bool(active_meds)
+        # Show medication card if meds exist and user hasn't explicitly dismissed it this session
+        show_med_check = bool(meds_list) and not st.session_state.get("meds_done_this_session", False)
         has_actionable_items = bool(show_med_check or target_appt or show_cbc or show_insurance)
 
         reminder_strip = st.container(
@@ -1809,6 +1885,7 @@ def render_patient_portal() -> None:
                                 toggle_prescription_taken_in_supabase(client, m["id"], True)
                             except Exception:
                                 pass
+                        st.session_state.meds_done_this_session = True
                         st.session_state.messages.append({
                             "role": "assistant",
                             "content": f"Confirmed! I've marked your {active_meal} medication ({med_names_str}) as taken. Great job maintaining your prescribed routine!",
@@ -2229,29 +2306,19 @@ def render_doctor_portal() -> None:
 
     with doc_main:
         st.markdown('<span class="middle-panel-marker"></span>', unsafe_allow_html=True)
-        hdr_col, btn_col = st.columns([1.75, 1.15], gap="small")
-        with hdr_col:
-            panel_header(
-                "Doctor Appointment Agenda",
-                f"Schedule Overview · {doc_name}",
-                "Click on any appointment card to view patient clinical chart and actions.",
-            )
-        with btn_col:
-            st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
-            if st.button("＋ Schedule Appointment", key="doc_add_appt_btn", type="primary", use_container_width=True):
-                doctor_book_appointment_dialog(doc_id)
 
+        # ── Header row: title | week dropdown | schedule button ─────────────
         week_options_map = {
-            "Previous Week (11–17 Oct)": [
-                ("Mon", "12 Oct 2026", "12 Oct"),
-                ("Tue", "13 Oct 2026", "13 Oct"),
-                ("Wed", "14 Oct 2026", "14 Oct"),
-                ("Thu", "15 Oct 2026", "15 Oct"),
-                ("Fri", "16 Oct 2026", "16 Oct"),
-                ("Sat", "17 Oct 2026", "17 Oct"),
-                ("Sun", "11 Oct 2026", "11 Oct"),
+            "Prev (4–10 Oct)": [
+                ("Mon", "05 Oct 2026", "05 Oct"),
+                ("Tue", "06 Oct 2026", "06 Oct"),
+                ("Wed", "07 Oct 2026", "07 Oct"),
+                ("Thu", "08 Oct 2026", "08 Oct"),
+                ("Fri", "09 Oct 2026", "09 Oct"),
+                ("Sat", "10 Oct 2026", "10 Oct"),
+                ("Sun", "04 Oct 2026", "04 Oct"),
             ],
-            "This Week (18–24 Oct)": [
+            "This (18–24 Oct)": [
                 ("Mon", "19 Oct 2026", "19 Oct"),
                 ("Tue", "20 Oct 2026", "20 Oct"),
                 ("Wed", "21 Oct 2026", "21 Oct"),
@@ -2260,7 +2327,7 @@ def render_doctor_portal() -> None:
                 ("Sat", "24 Oct 2026", "24 Oct"),
                 ("Sun", "18 Oct 2026", "18 Oct"),
             ],
-            "Next Week (25–31 Oct)": [
+            "Next (25–31 Oct)": [
                 ("Mon", "26 Oct 2026", "26 Oct"),
                 ("Tue", "27 Oct 2026", "27 Oct"),
                 ("Wed", "28 Oct 2026", "28 Oct"),
@@ -2269,7 +2336,7 @@ def render_doctor_portal() -> None:
                 ("Sat", "31 Oct 2026", "31 Oct"),
                 ("Sun", "25 Oct 2026", "25 Oct"),
             ],
-            "Week After (01–07 Nov)": [
+            "Nov (1–7)": [
                 ("Mon", "02 Nov 2026", "02 Nov"),
                 ("Tue", "03 Nov 2026", "03 Nov"),
                 ("Wed", "04 Nov 2026", "04 Nov"),
@@ -2279,81 +2346,116 @@ def render_doctor_portal() -> None:
                 ("Sun", "01 Nov 2026", "01 Nov"),
             ],
         }
+        week_keys = list(week_options_map.keys())
 
-        week_choice = st.radio(
-            "Select Week",
-            list(week_options_map.keys()),
-            index=1,
-            horizontal=True,
-            label_visibility="collapsed",
-            key="doc_agenda_week_choice",
-        )
+        hdr_col, week_col, btn_col = st.columns([1.55, 0.8, 0.82], gap="small")
+        with hdr_col:
+            panel_header(
+                "Doctor Appointment Agenda",
+                f"Schedule Overview · {doc_name}",
+                "Click on any appointment card to view patient's clinical chart.",
+            )
+        with week_col:
+            st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
+            week_choice = st.selectbox(
+                "Week",
+                week_keys,
+                index=1,
+                label_visibility="collapsed",
+                key="doc_agenda_week_choice",
+            )
+        with btn_col:
+            st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
+            if st.button("＋ Schedule Appointment", key="doc_add_appt_btn", type="primary", use_container_width=True):
+                doctor_book_appointment_dialog(doc_id)
 
+        # ── Day selector: 2 rows of buttons (Mon–Thu row 1, Fri–Sun row 2) ──
         current_week_days = week_options_map[week_choice]
-        day_tab_labels = []
+
+        # Initialize selected day in session state; reset when week changes
+        week_state_key = f"agenda_week_{week_choice}"
+        if st.session_state.get("_last_agenda_week") != week_choice:
+            st.session_state._last_agenda_week = week_choice
+            st.session_state.selected_agenda_day = 0  # default to first day (Mon)
+
+        selected_day_idx = st.session_state.get("selected_agenda_day", 0)
+
+        # Build day counts
+        day_counts = []
         for abbr, full_d, match_d in current_week_days:
             cnt = len([a for a in all_appts if match_d in (a.get("date") or "") or match_d in str(a.get("raw_datetime") or "")])
-            day_tab_labels.append(f"{abbr} ({match_d}) · {cnt}")
+            day_counts.append(cnt)
 
-        doc_day_tabs = st.tabs(day_tab_labels)
+        # ── Day selector: 1 row of 7 buttons with 2 lines of text per button ──
+        day_cols = st.columns(7, gap="small")
+        for i in range(7):
+            abbr, full_d, match_d = current_week_days[i]
+            cnt = day_counts[i]
+            is_sel = (selected_day_idx == i)
+            with day_cols[i]:
+                day_btn_label = f"{abbr} {match_d}\n{cnt} appt{'s' if cnt != 1 else ''}"
+                if st.button(
+                    day_btn_label,
+                    key=f"daybtn_{week_choice[:4]}_{i}",
+                    use_container_width=True,
+                    type="primary" if is_sel else "secondary",
+                ):
+                    st.session_state.selected_agenda_day = i
+                    st.rerun()
 
-        for day_idx, (abbr, full_d, match_d) in enumerate(current_week_days):
-            with doc_day_tabs[day_idx]:
-                day_appts = [a for a in all_appts if match_d in (a.get("date") or "") or match_d in str(a.get("raw_datetime") or "")]
-                st.markdown(f'<div class="timeline-label">{abbr.upper()}, {full_d.upper()} · {len(day_appts)} APPOINTMENT(S)</div>', unsafe_allow_html=True)
-                if not day_appts:
-                    st.info(f"No appointments scheduled for {abbr}, {full_d}.")
-                else:
-                    for idx, a in enumerate(day_appts):
-                        p_name = a.get("patient_name", "Patient")
-                        p_age = a.get("patient_age", "30")
-                        p_gender = a.get("patient_gender", "F")
-                        p_id = a.get("patient_id", "")
-                        p_phone = a.get("patient_phone", "")
-                        appt_date = a.get("date", "")
-                        appt_time = a.get("time", "")
-                        appt_type = a.get("type", "Consultation")
-                        appt_status = a.get("status", "Confirmed")
-                        appt_loc = a.get("location", "OPD Wing B")
-                        appt_sum = a.get("summary", "")
-                        rebook_notice = a.get("rebook_notice")
+        # ── Appointment list for selected day ────────────────────────────────
+        abbr_sel, full_d_sel, match_d_sel = current_week_days[selected_day_idx]
+        day_appts = [a for a in all_appts if match_d_sel in (a.get("date") or "") or match_d_sel in str(a.get("raw_datetime") or "")]
+        st.markdown(f'<div class="timeline-label" style="margin-top:10px;">{abbr_sel.upper()}, {full_d_sel.upper()} · {len(day_appts)} APPOINTMENT(S)</div>', unsafe_allow_html=True)
+        if not day_appts:
+            st.info(f"No appointments scheduled for {abbr_sel}, {full_d_sel}.")
+        else:
+            for idx, a in enumerate(day_appts):
+                p_name = a.get("patient_name", "Patient")
+                p_age = a.get("patient_age", "30")
+                p_gender = a.get("patient_gender", "F")
+                p_id = a.get("patient_id", "")
+                p_phone = a.get("patient_phone", "")
+                appt_date = a.get("date", "")
+                appt_time = a.get("time", "")
+                appt_type = a.get("type", "Consultation")
+                appt_status = a.get("status", "Confirmed")
+                appt_loc = a.get("location", "OPD Wing B")
+                appt_sum = a.get("summary", "")
+                rebook_notice = a.get("rebook_notice")
 
-                        status_badge_class = "status" if appt_status == "Confirmed" else ("status wait" if "Reschedule" in appt_status or "Unavailable" in appt_status else "status old")
-                        notice_html = f'<div class="rebook-notice">⚠️ <strong>Notice:</strong> {escape(rebook_notice)}</div>' if rebook_notice else ""
+                status_badge_class = "status" if appt_status == "Confirmed" else ("status wait" if "Reschedule" in appt_status or "Unavailable" in appt_status else "status old")
+                notice_html = f'<div class="rebook-notice">⚠️ <strong>Notice:</strong> {escape(rebook_notice)}</div>' if rebook_notice else ""
 
-                        with st.container():
-                            st.markdown('<div class="agenda-card-wrapper">', unsafe_allow_html=True)
-                            st.markdown(
-                                f"""
-                                <div class="agenda-card">
-                                  <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-                                    <div style="display:flex; align-items:center; gap:8px;">
-                                      <span class="agenda-time">{escape(appt_time)}</span>
-                                      <strong style="font-size:13px; color:var(--ink);">{escape(p_name)}</strong>
-                                      <span style="font-size:10px; color:var(--muted);">({escape(p_gender)}, {p_age}y) · ID: {escape(p_id[-4:] if p_id else '')}</span>
-                                    </div>
-                                    <div style="display:flex; gap:6px; align-items:center;">
-                                      <span class="micro-pill" style="font-weight:700;">{escape(appt_type)}</span>
-                                      <span class="{status_badge_class}">{escape(appt_status)}</span>
-                                    </div>
-                                  </div>
-                                  <div style="margin-top:6px; font-size:11px; color:#425B58; line-height:1.4;">
-                                    <strong>Date:</strong> {escape(appt_date)} · <strong>Location:</strong> {escape(appt_loc)} · <strong>Phone:</strong> {escape(p_phone)}
-                                  </div>
-                                  <div style="margin-top:5px; font-size:11px; color:var(--ink); line-height:1.4;">
-                                    {escape(appt_sum)}
-                                  </div>
-                                  {notice_html}
-                                  <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px; padding-top:6px; border-top:1px dashed #E2ECE9; font-size:10px; color:#0B6E69; font-weight:600;">
-                                    <span>🩺 Patient Clinical Chart & Actions</span>
-                                    <span>↗ Click card to view details</span>
-                                  </div>
-                                </div>
-                                """,
-                                unsafe_allow_html=True,
-                            )
-                            if st.button("Open Chart", key=f"card_{week_choice[:4]}_{abbr}_{idx}_{a['id']}", use_container_width=True):
-                                patient_clinical_chart_dialog(p_id, appointment_data=a)
+                with st.container():
+                    st.markdown('<div class="agenda-card-wrapper">', unsafe_allow_html=True)
+                    st.markdown(
+                        f"""
+                        <div class="agenda-card">
+                          <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                              <span class="agenda-time">{escape(appt_time)}</span>
+                              <strong style="font-size:13px; color:var(--ink);">{escape(p_name)}</strong>
+                              <span style="font-size:10px; color:var(--muted);">({escape(p_gender)}, {p_age}y) · ID: {escape(p_id[-4:] if p_id else '')}</span>
+                            </div>
+                            <div style="display:flex; gap:6px; align-items:center;">
+                              <span class="micro-pill" style="font-weight:700;">{escape(appt_type)}</span>
+                              <span class="{status_badge_class}">{escape(appt_status)}</span>
+                            </div>
+                          </div>
+                          <div style="margin-top:6px; font-size:11px; color:#425B58; line-height:1.4;">
+                            <strong>Date:</strong> {escape(appt_date)} · <strong>Location:</strong> {escape(appt_loc)} · <strong>Phone:</strong> {escape(p_phone)}
+                          </div>
+                          <div style="margin-top:5px; font-size:11px; color:var(--ink); line-height:1.4;">
+                            {escape(appt_sum)}
+                          </div>
+                          {notice_html}
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    if st.button("Open Chart", key=f"card_{week_choice[:4]}_{abbr_sel}_{idx}_{a['id']}", use_container_width=True):
+                        patient_clinical_chart_dialog(p_id, appointment_data=a)
 
     with doc_right:
         st.markdown('<span class="right-panel-marker"></span>', unsafe_allow_html=True)
@@ -2425,6 +2527,11 @@ def render_doctor_portal() -> None:
                         if st.button(sugg, key=f"doc_sugg_{s_idx}", use_container_width=True):
                             add_doctor_chat_message(sugg, doc_snap)
                             st.rerun()
+
+            st.markdown(
+                '<div class="safety-note">Ask about upcoming appointments, clinic offs, or patient clinical charts.</div>',
+                unsafe_allow_html=True,
+            )
 
 
 # -----------------------------------------------------------------------------
