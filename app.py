@@ -1809,12 +1809,16 @@ def render_patient_portal() -> None:
 def render_doctor_portal() -> None:
     client = INTEGRATIONS.supabase_client()
     doc_snap = fetch_doctor_snapshot(client, st.session_state.active_doctor_id)
-    doc = doc_snap["doctor"]
-    today_appts = doc_snap["today_appointments"]
-    week_appts = doc_snap["week_appointments"]
-    all_appts = doc_snap["all_appointments"]
-    unavailability = doc_snap["unavailability"]
-    stats = doc_snap["stats"]
+    doc = doc_snap.get("doctor") or {}
+    today_appts = doc_snap.get("today_appointments") or []
+    week_appts = doc_snap.get("week_appointments") or []
+    all_appts = doc_snap.get("all_appointments") or []
+    unavailability = doc_snap.get("unavailability") or []
+    stats = doc_snap.get("stats") or {}
+
+    doc_name = doc.get("name") or doc.get("doctor_name") or "Dr. Rhea Mehta"
+    doc_id = doc.get("id") or doc.get("doctor_id") or st.session_state.get("active_doctor_id", "11111111-1111-1111-1111-111111111111")
+    doc_specialization = doc.get("specialization") or doc.get("qualifications", "General Surgery Specialist")
 
     doc_left, doc_main, doc_right = st.columns([0.88, 1.35, 1.05], gap="medium")
 
@@ -1827,14 +1831,14 @@ def render_doctor_portal() -> None:
               <div style="display:flex; gap:12px; align-items:center;">
                 <div class="doctor-avatar">{escape(doc.get('initials', 'DR'))}</div>
                 <div>
-                  <div style="font:700 16px/1.2 'Manrope',sans-serif;">{escape(doc['name'])}</div>
-                  <div style="font-size:10px; opacity:.85; margin-top:2px;">Doctor ID · {escape(short_doctor_id(doc['id']))} · {escape(doc.get('specialization', 'Specialist'))}</div>
+                  <div style="font:700 16px/1.2 'Manrope',sans-serif;">{escape(doc_name)}</div>
+                  <div style="font-size:10px; opacity:.85; margin-top:2px;">Doctor ID · {escape(short_doctor_id(doc_id))} · {escape(doc_specialization)}</div>
                 </div>
               </div>
               <div style="margin-top:12px; padding-top:10px; border-top:1px solid rgba(255,255,255,.15); font-size:10px; opacity:.88; line-height:1.5;">
                 <div><strong>Department:</strong> {escape(doc.get('department', 'General Surgery'))}</div>
-                <div><strong>Location:</strong> {escape(doc.get('location', 'OPD Wing B, Room 304'))}</div>
-                <div><strong>Contact:</strong> {escape(doc.get('email', 'doctor@vesphcare.com'))}</div>
+                <div><strong>Location:</strong> {escape(doc.get('location', doc.get('room_no', 'OPD Wing B, Room 304')))}</div>
+                <div><strong>Contact:</strong> {escape(doc.get('email', doc.get('contact_email', 'dr.mehta@vesphcare.com')))}</div>
               </div>
             </div>
             """,
@@ -1843,17 +1847,17 @@ def render_doctor_portal() -> None:
 
         st.markdown('<div class="timeline-label">CLINIC WORKLOAD</div>', unsafe_allow_html=True)
         s_c1, s_c2, s_c3 = st.columns(3)
-        s_c1.metric("Today", f"{stats['today_count']}")
-        s_c2.metric("This Week", f"{stats['week_count']}")
-        s_c3.metric("Blocked", f"{stats['blocked_count']}")
+        s_c1.metric("Today", f"{stats.get('today_count', len(today_appts))}")
+        s_c2.metric("This Week", f"{stats.get('week_count', len(week_appts))}")
+        s_c3.metric("Blocked", f"{stats.get('blocked_count', len(unavailability))}")
 
         st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
         st.markdown('<div class="timeline-label">SCHEDULE CONTROLS</div>', unsafe_allow_html=True)
         if st.button("⛔ Mark Unavailability / Block Slot", key="doc_block_btn", type="primary", use_container_width=True):
-            doctor_unavailability_dialog(doc["id"], doc["name"])
+            doctor_unavailability_dialog(doc_id, doc_name)
 
         if st.button("＋ Schedule New Appointment", key="doc_add_appt_btn", use_container_width=True):
-            doctor_book_appointment_dialog(doc["id"])
+            doctor_book_appointment_dialog(doc_id)
 
         if st.button("↺ Reset Database & State", key="doc_reset_db_btn", use_container_width=True, help="Reset Supabase database back to baseline"):
             with st.spinner("Restoring Supabase database to baseline..."):
@@ -1896,7 +1900,7 @@ def render_doctor_portal() -> None:
         st.markdown('<span class="middle-panel-marker"></span>', unsafe_allow_html=True)
         panel_header(
             "Doctor Appointment Agenda",
-            f"Schedule Overview · {doc['name']}",
+            f"Schedule Overview · {doc_name}",
             "Click on any appointment to view the patient's full clinical chart, diagnostic labs, medications, and surgical notes.",
         )
 
@@ -1970,7 +1974,7 @@ def render_doctor_portal() -> None:
                                 patient_clinical_chart_dialog(p_id)
                         with col_action2:
                             if st.button("＋ Book Follow-up", key=f"book_fu_{tab_prefix}_{idx}_{a['id']}", use_container_width=True):
-                                doctor_book_appointment_dialog(doc["id"], default_patient_id=p_id)
+                                doctor_book_appointment_dialog(doc_id, default_patient_id=p_id)
                         st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
 
     with doc_right:
