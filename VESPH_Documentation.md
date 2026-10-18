@@ -1,390 +1,543 @@
 # VESPH Care — Virtual Engagement System for Patient Health
-## Comprehensive Technical Capstone Documentation
+## Comprehensive Technical System Documentation & Architectural Specification
 
 ---
 
 ## Executive Summary
 
-**VESPH Care** (Virtual Engagement System for Patient Health) is an intelligent, multi-agent post-discharge clinical coordination platform. It bridges the critical communication gap between hospital discharge and outpatient recovery by providing:
-1. **An Empathetic Patient Portal** featuring structured recovery timelines, diagnostic reports, discharge instructions, mealtime-grouped medication tracking (Breakfast, Lunch, Dinner), appointment management with auto-accepted slot rescheduling, and an interactive Care Assistant.
-2. **A High-Efficiency Doctor Portal** tailored for attending physicians (modeled around Lead Laparoscopic Surgeon **Dr. Rhea Mehta**), featuring a weekly clinic agenda across active patients, schedule blocking with automated conflict rebooking, patient chart reviews, and a **RAG Consultation Document Ingestion Agent** that reads doctor consultation notes/PDFs and synchronizes updates directly into the live clinical database.
-3. **A Hybrid Agent Architecture** powered by LangGraph, Groq LLM (`openai/gpt-oss-20b`), and live Supabase PostgreSQL storage, combining deterministic clinical safety guards with scoped generative intelligence.
+**VESPH Care** (Virtual Engagement System for Patient Health) is an intelligent, multi-agent post-discharge clinical coordination platform. It bridges the critical communication and compliance gap between inpatient hospital discharge and outpatient recovery by delivering:
+
+1. **An Empathetic Patient Portal:** Features structured recovery timelines, diagnostic reports, discharge instructions, mealtime-grouped medication tracking (Breakfast, Lunch, Dinner with live checkoff), appointment management with auto-accepted slot rescheduling, and an interactive Care Assistant.
+2. **A High-Efficiency Doctor Portal:** Tailored for attending physicians (modeled around Lead Laparoscopic Surgeon **Dr. Rhea Mehta**), featuring a weekly clinic agenda across active patients, schedule blocking with automated conflict rebooking, patient clinical chart reviews, and a **RAG Consultation Document Ingestion Agent** that reads doctor consultation notes/PDFs and synchronizes updates directly into the live clinical database.
+3. **A Hybrid Agent Architecture:** Powered by LangGraph, Groq LLM (`openai/gpt-oss-20b`), and live Supabase PostgreSQL storage, combining deterministic clinical safety guards with scoped generative intelligence.
+4. **Production-Ready AWS EC2 Infrastructure:** Packaged for persistent 24/7 background operation via `systemd` and Nginx reverse proxying with WebSocket upgrade support.
 
 ---
 
-## 1. Proposed Solution & Value Proposition
+## 1. System Architecture & Dual-Portal Topology
 
-### 1.1 The Clinical Challenge
-Post-operative and post-discharge recovery is vulnerable to four major failure modes:
-- **Medication Non-Adherence:** Patients frequently forget complex dosing schedules or fail to associate tablets with meals.
-- **Diagnostic Lapses:** Pre-consultation diagnostics (e.g., repeat CBC or follow-up ultrasounds) are missed before clinic visits, causing delays and wasted appointments.
-- **Administrative Friction:** Rescheduling appointments or handling doctor leave is stressful and manual, leading to high no-show rates.
-- **Disconnected Clinical Notes:** Consultation notes and prescriptions written on paper or PDF often take days to update electronic health record (EHR) summary fields, leading to stale patient portals.
-
-### 1.2 The VESPH Solution
-VESPH Care addresses each challenge through automated, intelligent workflows:
-
-```mermaid
-graph LR
-    subgraph PatientExperience["Patient Experience"]
-        P1["Mealtime Med Tracking<br/>Breakfast / Lunch / Dinner"]
-        P2["Auto-Accepted Rescheduling<br/>15m + 5m Buffer Cadence"]
-        P3["Plain-Language Chat<br/>Hospital-Only Scoped"]
-        P4["PDF Record Downloads<br/>Appointments & Labs"]
-    end
-
-    subgraph DoctorExperience["Doctor Experience"]
-        D1["Weekly Agenda View<br/>Dr. Rhea Mehta"]
-        D2["Leave & Unavailability Blocks<br/>Auto-Rebooking Conflicts"]
-        D3["Clinical Chart Dialogs<br/>Vitals, Labs, Surgery"]
-        D4["RAG PDF Note Ingestion<br/>Auto-Sync to Database"]
-    end
-
-    subgraph SharedCore["Live Supabase Database (10 Tables)"]
-        DB["PostgreSQL Clinical Store<br/>Patients, Doctors, Appointments, Consultations,<br/>Prescriptions, Diagnostics, Unavailability"]
-    end
-
-    PatientExperience <--> SharedCore
-    DoctorExperience <--> SharedCore
-```
-
----
-
-## 2. Project Tech Stack
-
-| Layer | Technology | Version | Purpose |
-|---|---|---|---|
-| **Frontend & UI** | Streamlit | `1.64.0` | Reactive multi-portal web interface with custom CSS design tokens |
-| **Agent Orchestration** | LangGraph | `1.2.12` | Deterministic state graph, routing, and conversation checkpointing |
-| **LLM Inference** | Groq Python SDK | `1.7.0` | Ultra-fast inference using `openai/gpt-oss-20b` for open-ended queries & clinical NLP |
-| **Database & Auth** | Supabase Python | `2.31.0` | Cloud PostgreSQL with relational schema and row-level updates |
-| **Document Processing** | pypdf | `6.21.1` | Pure-python PDF text extraction for consultation note ingestion |
-| **PDF Generation** | fpdf2 | `2.8.3` | High-fidelity branded PDF report exports and sample consultation documents |
-| **Runtime Environment**| Python | `3.12+` | Async execution, dataclasses, strict typing |
-| **Typography & Styling**| DM Sans & Manrope | Google Fonts | Clinical healthcare design system with custom CSS variables |
-
----
-
-## 3. Dataset, Database Schema & State Initialization
-
-### 3.1 Relational Database Architecture (10 Tables)
-VESPH Care operates entirely on a live Supabase PostgreSQL instance:
-
-```mermaid
-erDiagram
-    PATIENTS ||--o{ APPOINTMENTS : has
-    PATIENTS ||--o{ CONSULTATIONS : receives
-    PATIENTS ||--o{ PRESCRIPTION_DETAILS : takes
-    PATIENTS ||--o{ DIAGNOSTICS : undergoes
-    DOCTORS ||--o{ APPOINTMENTS : conducts
-    DOCTORS ||--o{ CONSULTATIONS : authors
-    DOCTORS ||--o{ DOCTOR_UNAVAILABILITY : logs
-    CONSULTATIONS ||--o{ PRESCRIPTION_DETAILS : generates
-    MEDICINES ||--o{ PRESCRIPTION_DETAILS : defines
-    DIAGNOSTICS ||--o{ DIAGNOSTICS_RESULTS : yields
-```
-
-### 3.2 Table Schema Specifications
-
-1. **`patients`**: Core demographic and clinical record.
-   - `patient_id` (UUID PK), `first_name`, `last_name`, `date_of_birth`, `gender`, `blood_type`, `contact_phone`, `contact_email`, `address`, `emergency_contact_name`, `emergency_contact_phone`, `primary_doctor_id` (FK), `patient_summary`.
-2. **`doctors`**: Clinical staff profiles and credentials.
-   - `doctor_id` (UUID PK), `doctor_name`, `qualifications`, `department`, `room_no`, `contact_phone`, `contact_email`, `is_active`.
-3. **`appointments`**: Scheduled outpatient and diagnostic visits.
-   - `appointment_id` (UUID PK), `patient_id` (FK), `doctor_id` (FK), `appointment_type` (`Consultation`, `FollowUp`, `Diagnostic`), `appointment_datetime`, `status` (`Confirmed`, `Completed`, `Cancelled`), `location`, `appointment_summary`, `reminders_sent_count`, `scheduled_by_role`.
-4. **`consultations`**: Inpatient and outpatient clinical encounter logs.
-   - `consultation_id` (UUID PK), `appointment_id` (FK), `patient_id` (FK), `doctor_id` (FK), `symptoms`, `diagnosis`, `treatment_plan`, `bp_systolic`, `bp_diastolic`, `sugar_reading`, `height_cm`, `weight_kg`, `consultation_summary`, `recommended_consultation`, `recommended_consultation_date`, `created_at`.
-5. **`medicines`**: Master pharmaceutical catalog.
-   - `medicine_id` (UUID PK), `brand_name`, `generic_name`, `dosage_form` (`Tablet`, `Inhaler`, etc.).
-6. **`prescription_details`**: Patient medication schedule and meal timings.
-   - `prescription_item_id` (UUID PK), `consultation_id` (FK), `patient_id` (FK), `medicine_id` (FK), `dosage`, `frequency_per_day`, `duration_days`, `start_date`, `is_taken` (Boolean), `refill_needed` (Boolean), `meal_timing` (`breakfast`, `lunch`, `dinner`, `other`), `instructions`.
-7. **`diagnostics`**: Diagnostic laboratory and imaging orders.
-   - `order_id` (UUID PK), `appointment_id` (FK), `consultation_id` (FK), `patient_id` (FK), `ordered_by_doctor_id` (FK), `order_status` (`Ready`, `Ordered`), `order_datetime`.
-8. **`diagnostics_results`**: Quantitative and qualitative test findings.
-   - `result_id` (UUID PK), `order_id` (FK), `test_category`, `test_name`, `result_value`, `reference_range`, `result_summary`, `report_file_url`, `result_datetime`.
-9. **`operation`**: Surgical encounter records and discharge state.
-   - `operation_id` (UUID PK), `patient_id` (FK), `lead_surgeon_id` (FK), `operation_name`, `scheduled_start_time`, `actual_end_time`, `discharge_summary`.
-10. **`doctor_unavailability`**: Scheduled doctor leave and blocked clinic slots.
-    - `unavailability_id` (UUID PK), `doctor_id` (FK), `block_type` (`full_day`, `timeslot`), `blocked_date`, `blocked_slot`, `reason`, `created_at`.
-11. **`escalation_agent_data`**: Safety escalation and resolution tracking.
-    - `ticket_id` (UUID PK), `patient_id` (FK), `category`, `priority`, `status`, `ai_detected_reason`, `resolution_notes`, `resolved_at`.
-
-### 3.3 Canonical Reset Mechanism (`reset_supabase_database`)
-To guarantee reproducible demonstrations, `tools/db_tools.py` provides `reset_supabase_database(client)`. This function cleans existing records and re-seeds canonical data:
-- Primary patient: **Ananya Iyer** (32F, recovering from laparoscopic appendectomy).
-- 6 additional clinic patients across Dr. Rhea Mehta's weekly schedule (Rahul Verma, Priya Patel, Vikram Malhotra, Sunita Deshmukh, Rohan Gupta, Kavita Nair).
-- Master medicines, active prescriptions with meal timings, past and future appointments across 18–24 Oct 2026, and diagnostic labs.
-- Accessible via the **↺ Reset Database & State** button on both the Patient and Doctor screens.
-
----
-
-## 4. System Architecture
+VESPH Care unifies patient recovery and physician practice workflows around a single live database source of truth:
 
 ```mermaid
 flowchart TB
-    subgraph ClientLayer["Frontend Client Layer (Streamlit)"]
-        UI["Streamlit Single-Page Application (app.py)"]
-        PV["👤 Patient Portal<br/>Timeline, Meds, Labs, Chat"]
-        DV["🩺 Doctor Portal<br/>Agenda, Block Slot, Chart, RAG Ingest"]
-        UI --> PV
-        UI --> DV
+    subgraph ClientTier["Client Tier · Streamlit Reactive UI (app.py)"]
+        Nav["Persistent Role Switcher<br/>(👤 Patient View · 🩺 Doctor View)"]
+        PV["👤 Patient Portal<br/>• Longitudinal Timeline<br/>• Mealtime Meds (Breakfast/Lunch/Dinner)<br/>• Appointments & Diagnostics<br/>• Interactive Care Assistant"]
+        DV["🩺 Doctor Portal<br/>• Multi-Week Agenda (Dr. Rhea Mehta)<br/>• Unavailability / Leave Blocking<br/>• Patient Clinical Charts Modal<br/>• RAG Consultation Note Ingestion"]
+        Nav --> PV
+        Nav --> DV
     end
 
-    subgraph ServiceLayer["Service & Orchestration Layer"]
-        Router["Deterministic Router<br/>(Natural Keyword Matching)"]
-        LG["LangGraph Orchestrator<br/>(StateGraph Workflow)"]
-        CS["Chat Service (chat_service.py)"]
-        Hub["Integration Hub (integrations.py)"]
-        PDF["PDF Tools (pdf_tools.py)<br/>fpdf2 Engine"]
-        RAG["Consultation Ingestion Engine<br/>(consultation_ingestion.py)"]
-
-        PV <--> CS
+    subgraph ServiceTier["Orchestration & Agent Service Tier"]
+        PO["Patient Orchestrator (LangGraph StateGraph)<br/>• Safety Escalation Agent<br/>• Reminder & Scheduling Agent<br/>• Patient Health Summary Agent<br/>• Natural Intake Parser ('I took dolo')"]
+        DO["Doctor Orchestrator (doctor_orchestrator.py)<br/>• Schedule & Agenda Agent<br/>• Leave & Escalation Agent<br/>• Patient Clinical Records Agent<br/>• Chit-Chat & Capability Agent"]
+        RAG["RAG Ingestion Engine (consultation_ingestion.py)<br/>• pypdf Text Extractor<br/>• Groq Clinical NLP Entity Parser<br/>• Transactional DB Committer"]
+        Hub["Integration Hub (integrations.py)<br/>• Scoped System Prompts<br/>• Connection Readiness Probes"]
+        
+        PV <--> PO
+        PO <--> Hub
+        DV <--> DO
         DV <--> RAG
-        CS --> Router
-        Router --> LG
-        LG --> Hub
-        DV <--> CS
+        DO <--> Hub
+        RAG <--> Hub
     end
 
-    subgraph ExternalServices["External APIs & Storage Layer"]
-        Groq["Groq API<br/>Model: openai/gpt-oss-20b<br/>Dual Persona Scoping"]
-        Supa["Supabase Cloud PostgreSQL<br/>10 Live Clinical Tables"]
-
+    subgraph DataTier["Data & Intelligence Storage Tier"]
+        Groq["Groq Cloud Inference (LPU)<br/>Model: openai/gpt-oss-20b<br/>• Patient Persona: Empathetic, Plain-Language<br/>• Doctor Persona: Clinical-Grade, Concise"]
+        Supa["Supabase Cloud PostgreSQL (10 Tables)<br/>• patients · doctors · appointments<br/>• consultations · medicines · prescription_details<br/>• diagnostics · diagnostics_results<br/>• doctor_unavailability · escalation_agent_data"]
+        
         Hub <--> Groq
         Hub <--> Supa
-        RAG <--> Supa
         RAG <--> Groq
-        PDF <--> Supa
+        RAG <--> Supa
     end
 ```
 
 ---
 
-## 5. Agent Workflow & Routing Design
+## 2. Multi-Agent Conversational Routing Architecture
 
-### 5.1 Orchestrator Graph
-The conversational agent is implemented using LangGraph's `StateGraph`. Requests follow a safety-first routing topology:
+VESPH Care deploys separate, specialized multi-agent graphs for the Patient and Doctor portals, guaranteeing deterministic safety and preventing cross-domain hallucinations.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> RouterNode
-    RouterNode --> EscalationAgent : Emergency / Report Issue / Doctor Absent
-    RouterNode --> ReminderAgent : Appointment Time / Next Dose / Diagnostic Date
-    RouterNode --> SummaryAgent : Medical Summary / Diagnosis / Med Details
-    RouterNode --> GroqFallback : General Hospital Query
+    [*] --> InboundMessage
 
-    EscalationAgent --> HumanConfirmation : Pending Patient Action
-    HumanConfirmation --> [*]
+    state "Role Detection" as RoleGate {
+        InboundMessage --> PatientRouter : Persona == Patient
+        InboundMessage --> DoctorRouter : Persona == Doctor
+    }
 
-    ReminderAgent --> [*]
-    SummaryAgent --> [*]
-    GroqFallback --> [*]
+    state "Patient Multi-Agent Graph (LangGraph)" as P_Graph {
+        PatientRouter --> EscalationAgent : Emergency (Chest Pain, Breathlessness)<br/>or Wrong Report Flag
+        PatientRouter --> ReminderAgent : Appointment Time, Next Med Dose,<br/>or Diagnostic Date Inquiry
+        PatientRouter --> SummaryAgent : Medical Diagnosis, Biomarkers,<br/>or Lab Value Interpretation
+        PatientRouter --> MedicationIntake : 'I took dolo' / 'taken meds'
+        PatientRouter --> GroqPatientFallback : General Hospital Record Query
+
+        EscalationAgent --> HumanActionTicket : Dispatch Priority Ticket
+        HumanActionTicket --> PatientResponse
+        ReminderAgent --> PatientResponse
+        SummaryAgent --> PatientResponse
+        MedicationIntake --> PatientResponse : Sync DB & Dismiss Notification
+        GroqPatientFallback --> PatientResponse
+    }
+
+    state "Doctor Clinical Assistant Graph" as D_Graph {
+        DoctorRouter --> ConfirmAction : Pending Action in Session ('yes' / 'confirm')
+        DoctorRouter --> ClinicalNoteIngest : Raw Consultation Text / Ingestion Request
+        DoctorRouter --> UnavailabilityBlock : Leave / Off Day / Block Schedule
+        DoctorRouter --> PatientQuery : 'Tell me about Ananya' / 'what meds is Neha taking'
+        DoctorRouter --> ScheduleCheck : 'what is my schedule on 22nd' / Appointment Count
+        DoctorRouter --> DoctorChitChat : Greeting / Off-Topic / Capabilities
+
+        ConfirmAction --> DoctorResponse : Execute Block or Commit Ingestion
+        ClinicalNoteIngest --> DoctorResponse : Generate Extraction Preview
+        UnavailabilityBlock --> DoctorResponse : Propose Rebooking Plan
+        PatientQuery --> DoctorResponse : Fetch Roster & Clinical Chart
+        ScheduleCheck --> DoctorResponse : Format Markdown OPD Table
+        DoctorChitChat --> DoctorResponse : Explain Clinical Capabilities
+    }
+
+    PatientResponse --> [*]
+    DoctorResponse --> [*]
 ```
-
-### 5.2 Natural Language Trigger Vocabularies
-Rather than requiring brittle single-keyword triggers, trigger terms are expanded into conversational phrasings:
-
-- **`ReminderAgent`**: Matches appointment questions (*"when do i go"*, *"what time is my visit"*, *"am i supposed to go this saturday"*), medication intake questions (*"did i take my morning pills"*, *"what meds with lunch"*, *"when do i take my inhaler"*), and diagnostic pre-visit checks (*"blood test before next visit"*, *"lab before my appointment"*).
-- **`SummaryAgent`**: Matches clinical status questions (*"what did the test show"*, *"what did the doctor say"*, *"what should i avoid"*, *"can i eat normally"*, *"any restrictions"*, *"was my report okay"*).
-- **`EscalationAgent`**: Matches critical clinical and operational flags (*"severe pain"*, *"cannot breathe"*, *"wrong report"*, *"this isn't mine"*, *"doctor didn't show up"*, *"doctor unavailable"*).
-
-### 5.3 Dual Persona System Prompts
-Groq open-ended responses are governed by strict system prompts tailored to the viewer persona:
-- **`PATIENT_SYSTEM_PROMPT`**: Empathetic, plain-language assistant. Strictly limited to hospital records and instructions. Strictly forbidden from giving general medical diagnoses, acting as a life coach, or inventing unconfirmed bookings.
-- **`DOCTOR_SYSTEM_PROMPT`**: Concise, clinical-grade assistant. Summarizes surgical notes, drug regimens, and schedules without colloquial filler.
 
 ---
 
-## 6. RAG Pipeline & Consultation Document Ingestion
+## 3. Doctor Unavailability & Automated Conflict Rebooking Flowchart
 
-### 6.1 The Consultation Document Problem
-Physicians routinely capture patient follow-ups on printed or digital consultation summaries. Manually transcribing diagnosis, vitals, updated care instructions, follow-up dates, mealtime medications, and diagnostic lab orders into multiple disparate database tables is tedious and error-prone.
-
-### 6.2 The VESPH RAG Ingestion Solution
-In the Doctor Portal, the **Clinical Assistant** acts as an autonomous clinical ingestion pipeline:
+When an attending physician blocks leave or an emergency surgery occurs, VESPH Care automatically evaluates conflicting appointments, calculates open fallback slots, updates database statuses, and dispatches patient escalations.
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Doc as Dr. Rhea Mehta
     participant UI as Doctor Portal UI
-    participant Eng as consultation_ingestion.py
-    participant Groq as Groq LLM (Clinical Extraction)
+    participant Orch as Doctor Orchestrator
     participant DB as Supabase PostgreSQL
-    actor Pat as Ananya Iyer (Patient View)
+    participant PatUI as Patient Portal (Ananya Iyer)
 
-    Doc->>UI: Uploads Consultation PDF or clicks 'Ingest Sample Note'
-    UI->>Eng: Passes PDF raw bytes
-    Eng->>Eng: extract_text_from_pdf() via pypdf
-    Eng->>Groq: parse_consultation_text() with structured schema
-    Groq-->>Eng: Returns structured JSON (diagnosis, vitals, meds, appts, diags)
-    Eng->>DB: ingest_consultation_to_supabase()
-    Note over Eng,DB: 1. Updates patients.patient_summary<br/>2. Inserts consultations row with vitals<br/>3. Inserts appointments row for follow-up<br/>4. Inserts prescription_details by mealtime<br/>5. Inserts diagnostics & results orders
-    DB-->>Eng: Transaction confirmed
-    Eng-->>UI: Formats structured confirmation card with checkmarks
-    UI-->>Doc: Displays confirmation receipt card in doctor chat
-    Doc->>Pat: Switches to 👤 Patient View
-    Note over Pat: Patient View reflects updated summary, new appointment,<br/>new mealtime medications, and ordered ultrasound immediately!
+    Doc->>UI: Types: "I'm not available on 22nd oct, block this day and reschedule patients"
+    UI->>Orch: Classify Intent -> BLOCK_UNAVAILABILITY (target_date = 2026-10-22)
+    Orch->>DB: Query appointments for doctor_id on 2026-10-22
+    DB-->>Orch: Returns 2 conflicting visits (Ananya Iyer @ 11:00 AM, Sandeep Mehra @ 2:30 PM)
+    Orch-->>UI: Displays Verification Proposal with conflicting appointments & asks confirmation
+    Doc->>UI: Types: "yes" / "confirm"
+    UI->>Orch: Intent -> CONFIRM_ACTION (pending_action = block_unavailability)
+    
+    rect rgb(240, 248, 255)
+        Note over Orch,DB: Execution of Block & Rebooking
+        Orch->>DB: Insert into doctor_unavailability (2026-10-22, full_day)
+        Orch->>Orch: Compute next available fallback slots (e.g. 26 Oct 10:00 AM)
+        loop For each conflicting appointment
+            Orch->>DB: Update appointments SET appointment_datetime = new_slot, status = 'Pending'
+        end
+        Orch->>DB: Insert priority rebooking notice in escalation_agent_data
+    end
+
+    DB-->>Orch: Write confirmed
+    Orch-->>UI: Displays Confirmation Receipt (Verified in Supabase, 2 appointments moved to Pending)
+    
+    rect rgb(255, 250, 240)
+        Note over PatUI: Patient Portal Reactivity
+        Doc->>PatUI: Switch to 👤 Patient View
+        PatUI->>DB: Fetch patient appointments
+        DB-->>PatUI: Appointment reflects Date: 26 Oct 2026, Status: Pending
+        PatUI-->>Doc: Notification Banner: "Action Required – Appointment Rescheduled to 26 Oct. Please confirm or rebook."
+    end
 ```
-
-### 6.3 Why Direct Extraction Outperforms Traditional Vector RAG Here
-In traditional vector RAG, unstructured text is chunked, embedded into vectors, and queried via cosine similarity. For electronic medical record (EMR) synchronization, vector RAG is sub-optimal:
-1. **Relational Integrity:** An EMR requires structured writes across normalized tables (`appointments`, `prescription_details`, `consultations`). Vector retrieval cannot execute database writes.
-2. **Context Completeness:** A patient consultation document is concise (1–3 pages). Chunking it destroys critical relational links between a drug, its dosage, and its mealtime.
-3. **Determinism:** Clinical safety requires zero hallucinations. Directly parsing into strict JSON schemas followed by transactional Supabase writes ensures 100% data integrity.
 
 ---
 
-## 7. AWS Deployment Architecture & Strategy
+## 4. Appointment State Transition Machine & PostgreSQL Enum Hardening
 
-While the demo runs locally and on Streamlit Cloud, the enterprise production architecture on AWS is outlined below:
+In the live Supabase PostgreSQL database, the `appointments.status` column is strictly constrained to the custom enum `appointment_status_enum`. Any unmapped text representation throws error `22P02`. VESPH Care implements canonical normalization to enforce deterministic state transitions:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Pending : 1. New Booking Created<br/>OR Date/Time Rescheduled in place
+
+    Pending --> Confirmed : Patient Confirms Proposed Slot<br/>(via Chat or Appt Card)
+    Confirmed --> Completed : Visit Conducted by Physician
+    Confirmed --> Cancelled : Patient or Doctor Cancels Visit
+
+    state "Reschedule with New Record" as SplitReschedule {
+        Confirmed --> Old_Rescheduled : Reschedule Requested
+        Old_Rescheduled --> [*] : Old Record Archived
+        Confirmed --> New_Pending : New Slot Created
+    }
+
+    New_Pending --> Confirmed : Patient Confirms New Slot
+
+    Completed --> [*]
+    Cancelled --> [*]
+
+    note right of Pending
+        Database Value: 'Pending'
+        Triggered when:
+        • New booking created
+        • Doctor unavail blocks day & shifts date
+        • Patient requests alternate slot
+    end note
+
+    note right of Old_Rescheduled
+        Database Value: 'Rescheduled'
+        Triggered when:
+        • Existing appointment is superseded
+          by a newly generated booking row
+    end note
+```
+
+### PostgreSQL Status Normalization Mapping (`tools/db_tools.py`)
+
+```python
+VALID_APPOINTMENT_STATUSES = {
+    "Confirmed",
+    "Pending",
+    "Completed",
+    "Cancelled",
+    "Rescheduled",
+}
+
+STATUS_NORMALIZATION_MAP = {
+    "reschedule pending": "Pending",  # Date is changing, awaiting confirmation
+    "rescheduled": "Rescheduled",
+    "reschedule": "Pending",
+    "pending confirmation": "Pending",
+    "pending": "Pending",
+    "confirmed": "Confirmed",
+    "cancelled": "Cancelled",
+    "canceled": "Cancelled",
+    "completed": "Completed",
+    "doctor unavailable (reschedule required)": "Cancelled",
+    "doctor unavailable": "Cancelled",
+    "unavailable": "Cancelled",
+}
+```
+
+---
+
+## 5. Patient Medication Adherence & Notification Dismissal Flow
+
+VESPH Care connects patient conversational chat with electronic medication administration records (eMAR). When patients mention taking medicine in colloquial language, the system identifies the dose, mutates the database, and dismisses pending alerts.
 
 ```mermaid
 flowchart TD
-    subgraph Route53["DNS & Edge"]
-        R53["Amazon Route 53<br/>Domain: care.vesph.com"]
-        CF["AWS CloudFront (CDN)<br/>Static Asset Caching"]
-        ACM["AWS Certificate Manager<br/>SSL/TLS Termination"]
-    end
-
-    subgraph VPC["AWS Virtual Private Cloud (VPC)"]
-        ALB["Application Load Balancer (ALB)<br/>Path & WebSocket Routing"]
-        
-        subgraph ECSCluster["ECS Fargate Cluster / App Runner"]
-            Task1["VESPH Container Instance 1<br/>(Dockerized Streamlit)"]
-            Task2["VESPH Container Instance 2<br/>(Dockerized Streamlit)"]
-        end
-
-        subgraph Security["Secrets & Configuration"]
-            SM["AWS Secrets Manager<br/>SUPABASE_KEY, GROQ_API_KEY"]
-            CW["Amazon CloudWatch<br/>Logs, Alarms & Metrics"]
-        end
-    end
-
-    subgraph DataTier["Data & Intelligence Tier"]
-        SupaDB["Supabase PostgreSQL<br/>(or Amazon RDS Aurora PostgreSQL)"]
-        GroqAPI["Groq LPU Inference Cloud"]
-    end
-
-    R53 --> CF --> ALB
-    ACM --> ALB
-    ALB --> Task1
-    ALB --> Task2
-    Task1 --> SM
-    Task2 --> SM
-    Task1 --> CW
-    Task2 --> CW
-    Task1 --> SupaDB
-    Task2 --> SupaDB
-    Task1 --> GroqAPI
-    Task2 --> GroqAPI
+    Start["Patient enters chat message<br/>(e.g., 'I took dolo' / 'took my morning pantocid')"]
+    
+    Detect{"Regex & Keyword Intake Matcher<br/>contains 'took', 'taken', or 'had my'<br/>AND matches active prescription name"}
+    
+    Start --> Detect
+    
+    Detect -- No --> StandardRoute["Route to Normal LangGraph Orchestrator<br/>(Summary, Reminder, or Escalation)"]
+    
+    Detect -- Yes --> FindMed["Identify target prescription_item_id<br/>in patient's active medication list"]
+    
+    FindMed --> DBUpdate["Call toggle_prescription_taken_in_supabase()<br/>UPDATE prescription_details SET is_taken = TRUE<br/>WHERE prescription_item_id = :id"]
+    
+    DBUpdate --> StateUpdate["Update local session state DATA['medications']<br/>is_taken = True & record_activity_update()"]
+    
+    StateUpdate --> ReEval{"Notification Centre Evaluation<br/>has_pending_meal_meds?<br/>Check if any untaken meds remain for meal"}
+    
+    ReEval -- All taken for meal --> DismissCard["Dismiss Medication Check Alert Card<br/>from Notification Centre"]
+    ReEval -- Other meds pending --> KeepCard["Keep alert card active<br/>for remaining untaken medications"]
+    
+    DismissCard --> Reply["Post conversational confirmation:<br/>'Great job! I've marked your Dolo 650 mg as taken in your hospital record.<br/>Your medication card and notification centre have been updated.'"]
+    KeepCard --> Reply
 ```
 
-### Key Deployment Considerations
-1. **WebSocket Persistence:** Streamlit requires sticky sessions or WebSocket upgrades enabled on the Application Load Balancer (`idle_timeout.timeout_seconds = 3600`).
-2. **Zero-Secret Container Images:** Secrets are retrieved at runtime from AWS Secrets Manager or environment parameters.
-3. **Horizontal Auto-Scaling:** ECS Fargate tasks auto-scale based on CPU utilization (>70%) and target response latency.
+---
+
+## 6. RAG Consultation Document Ingestion Pipeline
+
+The Doctor Portal provides an autonomous document ingestion pipeline that extracts unstructured consultation notes into normalized multi-table database records:
+
+```mermaid
+flowchart TB
+    Doc["Physician Input<br/>• Uploads PDF Consultation Note<br/>OR<br/>• Pastes raw clinical note text into chat"]
+    
+    PDFParse["pypdf Text Extraction<br/>extract_text_from_pdf() reads raw byte stream"]
+    
+    Doc --> PDFParse
+    
+    GroqNLP["Groq Clinical NLP Extraction<br/>Model: openai/gpt-oss-20b<br/>System Prompt: Strict Clinical Entity Schema<br/>Extracts: diagnosis, symptoms, vitals (BP/sugar/wt),<br/>medications by mealtime, follow-up date, diagnostic lab orders"]
+    
+    PDFParse --> GroqNLP
+    
+    Preview["Clinical Verification Preview Gate<br/>Displays structured extraction card in chat with extracted vitals,<br/>prescriptions, and follow-ups. Awaits doctor confirmation."]
+    
+    GroqNLP --> Preview
+    
+    Gate{"Doctor Confirmation<br/>'yes' / 'confirm'"}
+    
+    Preview --> Gate
+    
+    Gate -- Doctor Rejects --> Cancel["Cancel ingestion & clear pending action"]
+    
+    Gate -- Doctor Confirms --> Transact["Execute ingest_consultation_to_supabase()"]
+    
+    subgraph MultiTableWrites["Transactional Supabase Writes (5 Tables)"]
+        T1["1. UPDATE patients<br/>SET patient_summary = :new_summary"]
+        T2["2. INSERT INTO consultations<br/>(consultation_id, diagnosis, bp, sugar, weight, summary)"]
+        T3["3. INSERT INTO appointments<br/>(appointment_id, date, time, type = 'FollowUp', status = 'Confirmed')"]
+        T4["4. INSERT INTO prescription_details<br/>(prescription_item_id, medicine_id, meal_timing, dosage, instructions)"]
+        T5["5. INSERT INTO diagnostics & diagnostics_results<br/>(order_id, test_name, category, order_status)"]
+    end
+    
+    Transact --> T1
+    Transact --> T2
+    Transact --> T3
+    Transact --> T4
+    Transact --> T5
+    
+    MultiTableWrites --> Receipt["Generate Synchronized Receipt Report<br/>Displays formatted short IDs: PID-8421, CON-1001, MED-6661, APT-1001<br/>Directs doctor to switch to 👤 Patient View to inspect live updates"]
+```
 
 ---
 
-## 8. User Experience & Interface Walkthrough
+## 7. Standardized Short Identifier (ID) System Specification
 
-### 8.1 Top Navigation & Instant Role Switching
-The application header features a persistent role switcher:
-- **`👤 Patient View`**: Locks the interface to **Ananya Iyer** (UHID: `VESPH-2026-8821`), displaying her personalized recovery timeline and care records.
-- **`🩺 Doctor View`**: Locks the interface to **Dr. Rhea Mehta** (Lead Laparoscopic Surgeon), displaying her OPD clinic workload, schedule management, and agenda.
+To prevent raw 36-character UUID strings from cluttering the clinical user interface and conversational chat, VESPH Care implements a centralized short ID system:
 
-### 8.2 Patient Portal Features
-- **Surgical Recovery Timeline:** Displays recent surgery (**Laparoscopic appendectomy**), diagnosis, and recovery progress.
-- **Appointments Tab:** Displays upcoming visits with doctor name, room number, date, and preparation instructions.
-  - **Auto-Accepted Rescheduling:** Clicking *Reschedule* presents available slots based on the doctor's 15-minute cadence and automatically accepts open slots without hospital confirmation.
-- **Medications Tab Grouped by Mealtime:** Medications are categorized under:
-  - 🍳 **Breakfast (Morning)**: e.g., *Pantocid 40* (empty stomach before breakfast).
-  - 🥗 **Lunch (Afternoon)**: e.g., *Dolo 650* (SOS after lunch).
-  - 🍲 **Dinner (Night)**: e.g., *Budecort 200 Inhaler* or *Shelcal 500* (after dinner).
-  - Every card features a **✓ Taken** toggle that syncs directly with `prescription_details.is_taken` in Supabase.
-- **Diagnostics Tab:** Displays lab results (e.g., Complete Blood Count with WBC trend) and pending orders.
-- **Discharge Document Tab:** Houses surgical discharge summaries and user-uploaded care documents.
-- **PDF Export:** Every record detail dialog includes a **Download PDF** button that generates an `fpdf2` document with hospital branding.
-
-### 8.3 Doctor Portal Features
-- **Clinic Workload Metrics:** Displays counts for *Today's Appointments*, *Weekly Appointments*, and *Active Blocks*.
-- **Schedule Controls:**
-  - **⛔ Mark Unavailability / Block Slot:** Doctor can block a full day or specific timeslot with a stated reason (e.g. *Emergency Laparotomy*).
-  - **Auto-Rebooking Engine:** Conflicting patient appointments are automatically rescheduled to the doctor's next open slot, and a notification notice is attached to the record.
-  - **＋ Schedule New Appointment:** Allows booking existing or registering new patients using 15-minute appointment slots with 5-minute buffers across OPD working hours (**9:00 AM – 1:00 PM** and **2:00 PM – 5:00 PM**).
-- **Appointment Agenda:** Divided into three tabs (*Today 18 Oct*, *This Week 18–24 Oct*, *All Scheduled*). Each appointment card features:
-  - **🩺 View Patient Chart:** Opens a comprehensive clinical chart dialog displaying vitals, lab history, surgical details, and active prescriptions.
-  - **＋ Book Follow-up:** Opens a pre-filled booking modal for that patient.
-- **Doctor Clinical Assistant (Right Panel):**
-  - **Upload Consultation Note (PDF):** File uploader popover to ingest any consultation document.
-  - **📑 Ingest Sample Note:** One-click ingestion of Dr. Rhea Mehta's Day 8 consultation note.
-  - **Clinical Chat Form:** Doctor can ask questions or paste consultation notes directly into chat.
-
----
-
-## 9. Testing & Validation
-
-### 9.1 Test Scenarios & Automated Verifications
-
-| Test Case | Target Component | Input / Action | Expected Result | Status |
+| Entity Type | Raw Database Type | Short ID Format | Example | Source Generator |
 |---|---|---|---|---|
-| **TC-01** | `reminder_agent.py` | "When do I have to go to the hospital?" | Routes to `Reminder Agent` with next appointment details | **PASS** |
-| **TC-02** | `reminder_agent.py` | "Did I take my morning pills?" | Reports breakfast medication status | **PASS** |
-| **TC-03** | `summary_agent.py` | "What did the test show?" | Reports latest diagnostic results (CBC, histology) | **PASS** |
-| **TC-04** | `escalation_agent.py` | "I'm having severe chest pain" | Triggers emergency prompt, instructs to call +91 22 4000 1122 | **PASS** |
-| **TC-05** | `escalation_agent.py` | "This report belongs to someone else" | Opens human-in-the-loop escalation ticket with confirmation buttons | **PASS** |
-| **TC-06** | `integrations.py` | General wellness query | Patient prompt refuses life-coaching, redirects to care team | **PASS** |
-| **TC-07** | `db_tools.py` | Call `generate_available_slots()` | Returns 15m slots with 5m buffers excluding booked/blocked times | **PASS** |
-| **TC-08** | `db_tools.py` | Block doctor slot with existing visit | Marks doctor unavailable, auto-rebooks patient to next slot | **PASS** |
-| **TC-09** | `consultation_ingestion.py` | Ingest sample consultation note | Parses diagnosis, vitals, meds, appts; writes to Supabase | **PASS** |
-| **TC-10** | `pdf_tools.py` | Click "Download PDF" on appointment | Generates valid, downloadable PDF byte stream with header & table | **PASS** |
-| **TC-11** | `db_tools.py` | Click "Reset Database & State" | Resets all 10 tables to pristine canonical baseline | **PASS** |
+| **Patient** | UUID v4 | `PID-XXXX` | `PID-8421` | `short_patient_id(pid)` |
+| **Doctor** | UUID v4 | `DOC-XXXX` | `DOC-RHEA-01` | `short_doctor_id(did)` |
+| **Medicine** | UUID v4 | `MED-XXXX` | `MED-6661` | `short_medicine_id(mid)` |
+| **Appointment** | UUID v4 | `APT-XXXX` | `APT-1001` | `short_appointment_id(aid)` |
+| **Consultation** | UUID v4 | `CON-XXXX` | `CON-1001` | `short_consultation_id(cid)` |
+| **Diagnostic Lab** | UUID v4 | `LAB-XXXX` | `LAB-1001` | `short_diagnostic_id(did)` |
+
+### Formatting Logic (`tools/db_tools.py`)
+- Strips hyphens and extracts trailing uppercase alphanumeric characters.
+- Overrides canonical demo fixtures (e.g. `22222222-...` maps to `PID-8421`, `11111111-...` maps to `DOC-RHEA-01`).
+- Applied universally across timeline cards, detail popups, download filenames (e.g. `medication-MED-6661.txt`), clinical chart modals, and doctor chat responses.
 
 ---
 
-## 10. Error Handling & Resilience
+## 8. Relational Database Schema & Data Dictionary
 
-1. **Graceful LLM Fallback:** If the Groq API key is unconfigured, times out, or exceeds rate limits, the orchestrator automatically falls back to deterministic LangGraph responses without throwing UI exceptions or crashing the conversation.
-2. **Deterministic PDF Parse Fallback:** If Groq extraction fails during consultation note ingestion, `_deterministic_parse()` uses medical regex heuristics to extract patient name, diagnosis, vitals, mealtime medications, and appointments.
-3. **Database Fault Tolerance:** All Supabase operations are wrapped in safe try/except blocks with non-blocking error toasts.
-4. **Invalid Date Handling:** Date parsing functions (`_format_datetime`, `generate_available_slots`) accept ISO strings, localized strings, and null values without crashing.
+VESPH Care operates on 10 interconnected tables hosted on a live Supabase PostgreSQL instance:
+
+```mermaid
+erDiagram
+    PATIENTS ||--o{ APPOINTMENTS : "schedules"
+    PATIENTS ||--o{ CONSULTATIONS : "undergoes"
+    PATIENTS ||--o{ PRESCRIPTION_DETAILS : "prescribed"
+    PATIENTS ||--o{ DIAGNOSTICS : "ordered_for"
+    PATIENTS ||--o{ ESCALATION_AGENT_DATA : "triggers"
+    DOCTORS ||--o{ APPOINTMENTS : "attends"
+    DOCTORS ||--o{ CONSULTATIONS : "conducts"
+    DOCTORS ||--o{ DOCTOR_UNAVAILABILITY : "logs_leave"
+    CONSULTATIONS ||--o{ PRESCRIPTION_DETAILS : "contains"
+    MEDICINES ||--o{ PRESCRIPTION_DETAILS : "cataloged_in"
+    DIAGNOSTICS ||--o{ DIAGNOSTICS_RESULTS : "produces"
+
+    PATIENTS {
+        uuid patient_id PK
+        string first_name
+        string last_name
+        date date_of_birth
+        string gender
+        string blood_type
+        string contact_phone
+        uuid primary_doctor_id FK
+        text patient_summary
+    }
+
+    DOCTORS {
+        uuid doctor_id PK
+        string doctor_name
+        string qualifications
+        string department
+        string room_no
+        boolean is_active
+    }
+
+    APPOINTMENTS {
+        uuid appointment_id PK
+        uuid patient_id FK
+        uuid doctor_id FK
+        string appointment_type
+        timestamp appointment_datetime
+        appointment_status_enum status
+        string location
+        text appointment_summary
+    }
+
+    CONSULTATIONS {
+        uuid consultation_id PK
+        uuid patient_id FK
+        uuid doctor_id FK
+        text symptoms
+        text diagnosis
+        string bp_systolic
+        string bp_diastolic
+        string sugar_reading
+        string weight_kg
+    }
+
+    MEDICINES {
+        uuid medicine_id PK
+        string brand_name
+        string generic_name
+        string dosage_form
+    }
+
+    PRESCRIPTION_DETAILS {
+        uuid prescription_item_id PK
+        uuid consultation_id FK
+        uuid patient_id FK
+        uuid medicine_id FK
+        string dosage
+        meal_timing_enum meal_timing
+        boolean is_taken
+        text instructions
+    }
+```
 
 ---
 
-## 11. Human-in-the-Loop Approval & Escalation
+## 9. AWS EC2 Production Deployment & Cloud Architecture
 
-When a patient identifies an issue that cannot be resolved deterministically (such as receiving an incorrect lab report or an unexpected doctor cancellation):
-1. **Detection:** The `EscalationAgent` detects phrases like *"wrong report"* or *"someone else's lab"*.
-2. **Ticket Generation:** An escalation record is persisted to `escalation_agent_data` with status `Open` and priority `Critical`.
-3. **Interactive Confirmation:** In the chat UI, action buttons appear (*"Request report reissue"*, *"Speak with clinical coordinator"*).
-4. **Resolution:** The patient selects an option. The choice updates the ticket in Supabase to `Resolved`, sets `resolved_at`, and posts a confirmed resolution plan to the chat history.
+```mermaid
+flowchart TD
+    subgraph Internet["Public Internet"]
+        User["End Users<br/>(Patients & Doctors)"]
+    end
+
+    subgraph AWS["Amazon Web Services (AWS)"]
+        subgraph Edge["DNS & Security"]
+            R53["Amazon Route 53<br/>care.yourhospital.com"]
+            SG["Security Group<br/>Inbound: 22 (SSH), 80 (HTTP), 443 (HTTPS)"]
+        end
+
+        subgraph EC2["Amazon EC2 Instance (Ubuntu 22.04 LTS / t3.small)"]
+            Nginx["Nginx Reverse Proxy (Port 80/443)<br/>• SSL Termination via Certbot<br/>• WebSocket Upgrade Headers (Upgrade & Connection)"]
+            
+            subgraph Daemon["Service Supervisor"]
+                Sysd["systemd (vesph.service)<br/>Auto-restart on failure, restartSec=5"]
+            end
+
+            subgraph StreamlitApp["Python Virtual Environment (.venv)"]
+                App["Streamlit Server (Port 8501)<br/>Headless Mode, 127.0.0.1 Binding"]
+                Sec["secrets.toml (Permissions: 600)<br/>SUPABASE_URL, SUPABASE_KEY, LLM_API_KEY"]
+            end
+        end
+
+        subgraph CloudStorage["External Managed Services"]
+            SupaPostgres["Supabase Cloud PostgreSQL<br/>10 Live Relational Tables"]
+            GroqLPU["Groq Cloud Inference Engine<br/>openai/gpt-oss-20b"]
+        end
+    end
+
+    User --> R53
+    R53 --> SG
+    SG --> Nginx
+    Nginx -- "Proxy pass to 127.0.0.1:8501<br/>(with WebSocket upgrade)" --> App
+    Sysd --> App
+    App --> Sec
+    App <--> SupaPostgres
+    App <--> GroqLPU
+```
+
+### Production `systemd` Configuration (`/etc/systemd/system/vesph.service`)
+```ini
+[Unit]
+Description=VESPH Care Streamlit Service
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/VESPH
+ExecStart=/home/ubuntu/VESPH/.venv/bin/streamlit run app.py --server.port 8501 --server.address 127.0.0.1 --server.headless true --browser.gatherUsageStats false
+Restart=always
+RestartSec=5
+Environment=PATH=/home/ubuntu/VESPH/.venv/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Production Nginx Reverse Proxy Configuration (`/etc/nginx/sites-available/vesph`)
+```nginx
+server {
+    listen 80;
+    server_name care.yourhospital.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:8501;
+        proxy_http_version 1.1;
+
+        # WebSocket support (Critical for Streamlit reactive components)
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
+    }
+}
+```
 
 ---
 
-## 12. Challenges Faced & Engineering Solutions
+## 10. Automated Test Suite Matrix
 
-1. **Streamlit Community Cloud DNS Resolution:**
-   - *Issue:* The URL `vesphcare.streamlit.app` showed a DNS resolution error (`DNS_PROBE_POSSIBLE`).
-   - *Resolution:* Diagnosed as an upstream deployment configuration on Streamlit Community Cloud (rather than an application code defect). Confirmed local execution works without flaws (`streamlit run app.py`), and provided deployment redeployment guidelines.
-2. **Natural Language Ambiguity vs Deterministic Safety:**
-   - *Issue:* Real patients do not speak in keywords (e.g., they ask *"am I supposed to go this Saturday?"* instead of saying *"appointment"*).
-   - *Resolution:* Re-architected trigger dictionaries in `reminder_agent.py`, `summary_agent.py`, and `escalation_agent.py` to match natural conversational phrases while preserving deterministic safety boundaries.
-3. **Doctor Unavailability & Patient Slot Collisions:**
-   - *Issue:* When a surgeon is called into an emergency laparotomy, canceling patient appointments manually leaves patients stranded.
-   - *Resolution:* Developed `block_doctor_slot_in_supabase()` which dynamically detects overlapping appointments, computes the doctor's next open fallback slot, updates the appointment datetime, and appends a clear rescheduling explanation notice.
-4. **Extracting Semi-Structured Clinical Notes into Multi-Table Relational Schema:**
-   - *Issue:* Consultation notes contain diagnosis, vitals, follow-up dates, and prescriptions mixed in paragraphs.
-   - *Resolution:* Engineered `tools/consultation_ingestion.py` which combines `pypdf` with a specialized clinical NLP extractor to parse text into strict JSON, followed by synchronized writes across `patients`, `consultations`, `appointments`, `prescription_details`, and `diagnostics`.
+The platform is validated by 19 automated unit tests covering safety-critical routing, rescheduling state transitions, and database enum compatibility:
+
+| Test Identifier | Target Test Class | Tested User Scenario | Verified Assertion | Status |
+|---|---|---|---|---|
+| **TEST-01** | `TestPatientOrchestrator` | "Tell me about Dr. Rhea Mehta" | Doctor credentials, qualifications, room number | **PASS** |
+| **TEST-02** | `TestPatientOrchestrator` | "What is my recovery trend?" | Historical biomarker trend & surgical clearance | **PASS** |
+| **TEST-03** | `TestPatientOrchestrator` | "What is my medication adherence?" | Prescribed vs. taken ratio (33% adherence) | **PASS** |
+| **TEST-04** | `TestPatientOrchestrator` | "When is my upcoming appointment?" | Next visit date, location, and prep instructions | **PASS** |
+| **TEST-05** | `TestPatientOrchestrator` | "I took dolo" | Natural intake acknowledgment & `is_taken = True` | **PASS** |
+| **TEST-06** | `TestPatientOrchestrator` | `normalize_appointment_status` | Maps "Reschedule Pending" strictly to "Pending" | **PASS** |
+| **TEST-07** | `TestPatientOrchestrator` | `normalize_appointment_status` | Maps "Doctor Unavailable" strictly to "Cancelled" | **PASS** |
+| **TEST-08** | `TestPatientOrchestrator` | `normalize_appointment_status` | Validates all outputs belong to `VALID_APPOINTMENT_STATUSES` | **PASS** |
+| **TEST-09** | `TestDoctorOrchestrator` | "What's my schedule on 21st oct?" | Matches appointment count and returns OPD table | **PASS** |
+| **TEST-10** | `TestDoctorOrchestrator` | "What's my schedule on 22nd oct?" | Accurately extracts ordinal dates ("22nd oct") | **PASS** |
+| **TEST-11** | `TestDoctorOrchestrator` | "What's my schedule on 1st oct?" | Distinguishes single-digit from compound numbers | **PASS** |
+| **TEST-12** | `TestDoctorOrchestrator` | "I'm not available on 22nd oct" | Generates unavailability proposal with conflicts | **PASS** |
+| **TEST-13** | `TestDoctorOrchestrator` | "Tell me about Ananya Iyer" | Searches patient roster and confirms profile | **PASS** |
+| **TEST-14** | `TestDoctorOrchestrator` | "What medication is Ananya Iyer taking?" | Recognizes patient and lists active prescriptions | **PASS** |
+| **TEST-15** | `TestDoctorOrchestrator` | "Hello" / "Who are you?" | Responds with doctor capabilities and agenda options | **PASS** |
+| **TEST-16** | `TestDoctorOrchestrator` | "Yes" with pending block action | Executes Supabase leave block and rebooking | **PASS** |
+| **TEST-17** | `TestDoctorOrchestrator` | Consultation note extraction | Extracts diagnosis, vitals, prescriptions, and follow-ups | **PASS** |
+| **TEST-18** | `TestDoctorOrchestrator` | "What's the weather today?" | Deflects non-medical chit-chat to clinical capabilities | **PASS** |
+| **TEST-19** | `TestDoctorOrchestrator` | Fallback month matching | Defaults omitted months to active week's month | **PASS** |
+
+Execution command:
+```bash
+python -m unittest discover tests -v
+```
 
 ---
 
-## 13. Conclusion & Future Roadmap
+## 11. Engineering Challenges & Solutions
 
-VESPH Care successfully demonstrates a secure, high-utility clinical coordination platform. By uniting deterministic safety routing with generative intelligence and multi-table relational persistence, the platform eliminates post-discharge uncertainty for patients while minimizing administrative workload for physicians.
+| Challenge Encountered | Root Cause | Engineering Solution |
+|---|---|---|
+| **PostgreSQL 22P02 Enum Error** | Code attempted to set `status = "Reschedule Pending"`, which is not declared in Supabase's `appointment_status_enum`. | Implemented `STATUS_NORMALIZATION_MAP` and `normalize_appointment_status`. When dates are changing, status is automatically normalized to `"Pending"` (awaiting patient confirmation) or `"Rescheduled"` on superseded records. |
+| **Medication Name Redundancy** | Brand names in pharmaceutical catalogs sometimes contained dosage numbers (e.g. *Dolo 650*), resulting in display strings like *"Dolo 650 650 mg"*. | Cleaned baseline seed data and implemented regex deduplication `re.sub(r'\s*\d+\s*$', '', brand)` before concatenating dosage strings. |
+| **Streamlit WebSocket Drops on EC2** | Streamlit UI became unresponsive or disconnected when accessed through standard HTTP reverse proxies. | Configured Nginx with persistent WebSocket upgrade directives (`proxy_set_header Upgrade $http_upgrade`, `proxy_set_header Connection "upgrade"`, `proxy_read_timeout 86400`). |
+| **Raw UUID Visual Clutter** | 36-character hexadecimal UUIDs appeared in appointment cards, charts, and agent replies. | Built a centralized short ID system (`tools/db_tools.py`) mapping UUIDs into clean clinical badges (`PID-8421`, `DOC-RHEA-01`, `MED-6661`, `APT-1001`, `CON-1001`, `LAB-1001`). |
+| **Multi-Table RAG Ingestion Sync** | Consultation notes combine diagnosis, vitals, future visits, and drugs into a single text block. | Engineered `tools/consultation_ingestion.py` using `pypdf` and Groq JSON entity extraction, followed by synchronized writes across 5 relational tables upon doctor confirmation. |
+
+---
+
+## 12. Conclusion & Future Roadmap
+
+VESPH Care provides an enterprise-ready blueprint for post-discharge clinical coordination. By fusing deterministic state machines for safety-critical actions with scoped LLM extraction and relational PostgreSQL persistence, it reduces physician administrative overhead while providing patients with clear, structured recovery guidance.
 
 ### Future Roadmap
-1. **HL7 / FHIR Integration:** Implement bi-directional sync with hospital EHR systems (Epic, Cerner) via FHIR R4 APIs.
-2. **Omni-Channel Notifications:** Connect the medication check and appointment reminder agents to WhatsApp Business API and SMS gateways.
-3. **Multi-Language Support:** Expand clinical prompts to support regional Indian languages (Hindi, Marathi, Tamil) for broader patient accessibility.
-4. **Computer Vision for Lab Reports:** Add multimodal OCR/vision parsing for handwritten prescription slips and printed lab graphs.
+1. **FHIR R4 / HL7 Integration:** Direct bi-directional integration with hospital EHRs (Epic, Cerner).
+2. **Omni-Channel Patient Notifications:** Automated WhatsApp Business API and SMS triggers for mealtime medication reminders and schedule change alerts.
+3. **Multilingual Regional Support:** Localization for regional Indian languages (Hindi, Marathi, Tamil, Telugu).
+4. **Computer Vision Lab Reader:** Multimodal vision parsing of printed pathology and diagnostic imaging reports.
