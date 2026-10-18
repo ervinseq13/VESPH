@@ -39,6 +39,28 @@ DOCTOR_CHAT_AVATAR = str(ASSET_DIR / "doctor-avatar.svg")
 VESPH_CHAT_AVATAR = str(ASSET_DIR / "vesph-avatar.svg")
 
 
+def short_patient_id(pid: str | None) -> str:
+    """Format a clean, short, professional Patient ID for display."""
+    if not pid:
+        return "PID-8421"
+    clean = str(pid).strip()
+    if "2222" in clean:
+        return "PID-8421"
+    clean_no_hyphen = clean.replace("-", "").upper()
+    return f"PID-{clean_no_hyphen[:5]}"
+
+
+def short_doctor_id(did: str | None) -> str:
+    """Format a clean, short, professional Doctor ID for display."""
+    if not did:
+        return "DOC-RHEA-01"
+    clean = str(did).strip()
+    if "1111" in clean:
+        return "DOC-RHEA-01"
+    clean_no_hyphen = clean.replace("-", "").upper()
+    return f"DOC-{clean_no_hyphen[:5]}"
+
+
 st.set_page_config(
     page_title="VESPH Care · Patient Follow-up",
     page_icon="✚",
@@ -67,8 +89,18 @@ CSS = """
 
 html, body, [class*="css"] { font-family: "DM Sans", sans-serif; }
 .stApp { background: var(--canvas); color: var(--ink); }
-.block-container { max-width: 1760px; padding: 1.1rem 1.45rem 2rem; }
-[data-testid="stHeader"] { background: rgba(244,247,246,.86); }
+.block-container {
+  max-width: 1760px;
+  padding-top: 2.85rem !important;
+  padding-bottom: 2.2rem !important;
+  padding-left: 1.25rem !important;
+  padding-right: 1.25rem !important;
+}
+[data-testid="stHeader"] {
+  background: rgba(244,247,246,.94);
+  height: 2.6rem;
+  z-index: 50;
+}
 [data-testid="stToolbar"] { right: 1rem; }
 h1, h2, h3 { font-family: "Manrope", sans-serif !important; letter-spacing: -.02em; }
 
@@ -203,56 +235,75 @@ div[data-testid="stMetricValue"] { font-size:16px; }
 .left-panel-marker, .middle-panel-marker, .right-panel-marker { display:none; }
 
 @media (min-width: 901px) {
-  [data-testid="stAppViewContainer"], [data-testid="stMain"] { overflow:hidden; }
-  .block-container { height:100vh; overflow:hidden; padding-bottom:.75rem; }
-  [data-testid="stColumn"]:has(.left-panel-marker),
-  [data-testid="stColumn"]:has(.middle-panel-marker),
-  [data-testid="stColumn"]:has(.right-panel-marker) {
-    height:calc(100vh - 2rem);
-    min-height:0;
-    box-sizing:border-box;
-    padding-top:8px;
-    padding-bottom:10px;
+  .block-container {
+    min-height: calc(100vh - 2.85rem);
+    padding-bottom: 2.5rem !important;
   }
-  [data-testid="stColumn"]:has(.left-panel-marker),
-  [data-testid="stColumn"]:has(.right-panel-marker) { overflow:hidden; }
-  [data-testid="stColumn"]:has(.right-panel-marker) { position:relative; }
+  [data-testid="stColumn"]:has(.left-panel-marker) {
+    max-height: calc(100vh - 6.2rem);
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    padding-right: 4px;
+  }
+  [data-testid="stColumn"]:has(.middle-panel-marker) {
+    overflow: visible;
+  }
+  [data-testid="stColumn"]:has(.middle-panel-marker) .stTabs [role="tabpanel"] {
+    height: calc(100vh - 360px);
+    min-height: 260px;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    padding-right: 4px;
+  }
+  [data-testid="stColumn"]:has(.right-panel-marker) {
+    position: relative;
+    max-height: calc(100vh - 6.2rem);
+  }
   .stApp .st-key-chat_history,
   .stApp .st-key-doctor_chat_history {
-    height:calc(100vh - 19.1rem) !important;
-    min-height:calc(100vh - 19.1rem) !important;
-    max-height:calc(100vh - 19.1rem) !important;
-    overflow-y:auto;
-    padding-bottom:8px;
+    height: calc(100vh - 390px) !important;
+    min-height: 220px !important;
+    max-height: calc(100vh - 390px) !important;
+    overflow-y: auto !important;
+    padding-bottom: 4px;
   }
   .st-key-chat_dock,
   .st-key-doctor_chat_dock {
-    position:absolute;
-    left:0;
-    right:0;
-    bottom:76px;
-    gap:6px !important;
+    position: relative !important;
+    bottom: auto !important;
+    margin-top: 4px !important;
+    gap: 4px !important;
   }
   .st-key-chat_dock [data-testid="stVerticalBlock"],
-  .st-key-doctor_chat_dock [data-testid="stVerticalBlock"] { gap:6px !important; }
+  .st-key-doctor_chat_dock [data-testid="stVerticalBlock"] { gap: 4px !important; }
   .st-key-chat_dock [data-testid="stForm"],
-  .st-key-doctor_chat_dock [data-testid="stForm"] { margin:0 !important; padding:0 !important; }
+  .st-key-doctor_chat_dock [data-testid="stForm"] { margin: 0 !important; padding: 0 !important; }
   .st-key-chat_dock .safety-note,
-  .st-key-doctor_chat_dock .safety-note { margin-top:0; }
+  .st-key-doctor_chat_dock .safety-note { margin-top: 4px !important; }
+  .footer-note { display: block; margin-top: 14px; text-align: center; font-size: 10px; color: #7D8F8C; }
+}
 
-  [data-testid="stColumn"]:has(.middle-panel-marker) {
-    overflow-y:hidden;
-    overflow-x:hidden;
-  }
-  [data-testid="stColumn"]:has(.middle-panel-marker) .stTabs [role="tabpanel"] {
-    height:calc(100vh - 390px);
-    min-height:220px;
-    overflow-y:auto;
-    overflow-x:hidden;
-    scrollbar-gutter:stable;
-    padding-right:4px;
-  }
-  .footer-note { display:none; }
+div[data-testid="stRadio"] {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+}
+div[data-testid="stRadio"] > div {
+  background: #EBF2F0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  gap: 14px;
+  border: 1px solid var(--line);
+}
+div[data-testid="stRadio"] label {
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  cursor: pointer !important;
+  color: var(--ink) !important;
+  margin: 0 !important;
+}
+
 /* Doctor Portal & Meal Medication Styles */
 .portal-bar {
   display: flex;
@@ -536,7 +587,7 @@ def format_ingestion_report(res: dict[str, Any], doc_title: str) -> str:
     md = [
         "### 📑 Consultation Ingested & Database Synchronized",
         f"**Source Document:** {doc_title}  ",
-        f"**Target Patient:** {escape(str(res['patient_name']))} (`...{str(res['patient_id'])[-4:]}`)  ",
+        f"**Target Patient:** {escape(str(res['patient_name']))} (`{short_patient_id(res['patient_id'])}`)  ",
         f"**Primary Diagnosis:** {escape(str(res['diagnosis']))}  ",
         "",
         "#### 🔄 Live Supabase Updates Applied:",
@@ -914,13 +965,28 @@ def record_detail_dialog(record_type: str, record: dict) -> None:
               <div class="detail-cell"><strong>Doctor</strong>{escape(record['doctor'])}</div>
               <div class="detail-cell"><strong>Department</strong>{escape(record['department'])}</div>
               <div class="detail-cell"><strong>Location</strong>{escape(record['location'])}</div>
-              <div class="detail-cell"><strong>Patient ID</strong>{escape(DATA['patient']['id'])}</div>
+              <div class="detail-cell"><strong>Patient ID</strong>{escape(short_patient_id(DATA['patient']['id']))}</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
         if record.get("preparation"):
             st.info(record["preparation"])
+        if record.get("status") != "Confirmed":
+            col_cf, col_rs = st.columns(2)
+            with col_cf:
+                if st.button("✓ Confirm Attendance", key=f"dlg_cf_{record['id']}", type="primary", use_container_width=True):
+                    record["status"] = "Confirmed"
+                    try:
+                        update_appointment_in_supabase(INTEGRATIONS.supabase_client(), record["id"], "Confirmed")
+                    except Exception:
+                        pass
+                    record_activity_update("Confirmed appointment attendance")
+                    st.toast("Appointment attendance confirmed!", icon="✅")
+                    st.rerun()
+            with col_rs:
+                if st.button("Reschedule", key=f"dlg_rs_{record['id']}", use_container_width=True):
+                    reschedule_dialog()
         filename = f"{record['id']}.txt"
     elif record_type == "diagnostic_booking":
         st.subheader(record["test"])
@@ -950,7 +1016,7 @@ def record_detail_dialog(record_type: str, record: dict) -> None:
               <div class="detail-cell"><strong>Instructions</strong>{escape(record['instruction'])}</div>
               <div class="detail-cell"><strong>Duration</strong>{escape(record['duration'])}</div>
               <div class="detail-cell"><strong>Next dose</strong>{escape(record['next_dose'])}</div>
-              <div class="detail-cell"><strong>Patient ID</strong>{escape(DATA['patient']['id'])}</div>
+              <div class="detail-cell"><strong>Patient ID</strong>{escape(short_patient_id(DATA['patient']['id']))}</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -1075,7 +1141,7 @@ def doctor_book_appointment_dialog(doctor_id: str, default_patient_id: str | Non
     new_patient_info = {}
 
     if patient_choice == "Existing Patient":
-        patient_options = {p["id"]: f"{p['name']} ({p.get('gender', '')}, {p.get('age', '')}y) · {p.get('phone', '')}" for p in patients}
+        patient_options = {p["id"]: f"{p['name']} ({short_patient_id(p['id'])}, {p.get('gender', '')}, {p.get('age', '')}y) · {p.get('phone', '')}" for p in patients}
         default_index = 0
         if default_patient_id and default_patient_id in patient_options:
             default_index = list(patient_options.keys()).index(default_patient_id)
@@ -1171,7 +1237,7 @@ def patient_clinical_chart_dialog(patient_id: str) -> None:
 
     p = p_snap["patient"]
     st.subheader(f"🩺 {p['name']} · Clinical Profile")
-    st.caption(f"Patient ID: {p['id']} · Age: {p['age']}y · Sex: {p['gender']} · Blood: {p['blood_group']} · Phone: {p['phone']}")
+    st.caption(f"Patient ID: {short_patient_id(p['id'])} · Age: {p['age']}y · Sex: {p['gender']} · Blood: {p['blood_group']} · Phone: {p['phone']}")
 
     # Health & Vitals
     v1, v2, v3, v4 = st.columns(4)
@@ -1265,24 +1331,13 @@ def render_patient_portal() -> None:
 
     with left:
         st.markdown('<span class="left-panel-marker"></span>', unsafe_allow_html=True)
-        st.markdown(
-            """
-            <div class="brand-panel">
-              <div class="brand-lockup">
-                <div class="brand-mark">✚</div>
-                <div><div class="brand-name">VESPH Care</div><div class="brand-sub">Virtual Engagement System for Patient Health</div></div>
-              </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
         panel_header("Patient overview", "", f"Updated {get_last_updated_str()}")
         st.markdown(
             f"""
             <div class="patient-card">
               <div class="patient-head">
                 <div class="avatar">{escape(patient['initials'])}</div>
-                <div><div class="patient-name">{escape(patient['name'])}</div><div class="patient-id">Patient ID · {escape(patient['id'])}</div></div>
+                <div><div class="patient-name">{escape(patient['name'])}</div><div class="patient-id">Patient ID · {escape(short_patient_id(patient['id']))}</div></div>
               </div>
               <div class="patient-grid">
                 <div class="patient-stat compact"><span>Age</span><strong>{patient['age']} yrs</strong></div>
@@ -1340,84 +1395,15 @@ def render_patient_portal() -> None:
     with middle:
         st.markdown('<span class="middle-panel-marker"></span>', unsafe_allow_html=True)
         panel_header("Notification centre", "")
-        next_appointment = DATA["appointments"][0]
-        reminder_strip = st.container(
-            horizontal=True,
-            wrap=False,
-            horizontal_alignment="left",
-            gap="small",
-            key="reminder_carousel",
-        )
-        with reminder_strip.container(border=True, width=340):
-            is_confirmed = next_appointment.get("status") == "Confirmed"
-            kicker_text = "Appointment · Confirmed" if is_confirmed else "Appointment · Action needed"
-            st.markdown(
-                f"""
-                <div class="reminder-card primary">
-                  <div class="reminder-top"><div class="reminder-kicker">{kicker_text}</div><div class="reminder-time">In 2 days</div></div>
-                  <div class="reminder-title">{escape(next_appointment['type'])}</div>
-                  <div class="reminder-detail">{escape(next_appointment['doctor'])} · {escape(next_appointment['date'])}<br>{escape(next_appointment['time'])} · {escape(next_appointment['location'])}</div>
-                  <div class="reminder-meta">Reminder 1 of 2 · Bring latest CBC</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            action_a, action_b = st.columns(2, gap="small")
-            with action_a:
-                if is_confirmed:
-                    st.button("✓ Confirmed", key="confirm_reminder_done", disabled=True, use_container_width=True)
-                else:
-                    if st.button("Confirm", type="primary", key="confirm_reminder", use_container_width=True):
-                        next_appointment["status"] = "Confirmed"
-                        try:
-                            update_appointment_in_supabase(
-                                INTEGRATIONS.supabase_client(),
-                                next_appointment["id"],
-                                "Confirmed",
-                            )
-                        except Exception:
-                            pass
-                        st.session_state.messages.append(
-                            {
-                                "role": "assistant",
-                                "content": "Your surgical follow-up is confirmed. I’ll send the second reminder 24 hours before the appointment.",
-                                "agent": "Reminder Agent · Appointments",
-                            }
-                        )
-                        st.rerun()
-            with action_b:
-                if st.button("Reschedule", key="reschedule_reminder", use_container_width=True):
-                    reschedule_dialog()
-        with reminder_strip.container(border=True, width=340):
-            st.markdown(
-                """
-                <div class="reminder-card secondary">
-                  <div class="reminder-top"><div class="reminder-kicker">Diagnostic</div><div class="reminder-time">In 2 days</div></div>
-                  <div class="reminder-title">Complete Blood Count</div>
-                  <div class="reminder-detail">20 Oct · 9:00 AM<br>Ground floor · No fasting</div>
-                  <div class="reminder-meta">Reminder 1 of 2</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            if st.button("View booking", icon=":material/visibility:", key="view_cbc_reminder", use_container_width=True):
-                record_detail_dialog("diagnostic_booking", DATA["diagnostic_schedule"][0])
-        with reminder_strip.container(border=True, width=340):
-            st.markdown(
-                """
-                <div class="reminder-card secondary">
-                  <div class="reminder-top"><div class="reminder-kicker">Document</div><div class="reminder-time">Due 24 Oct</div></div>
-                  <div class="reminder-title">Insurance claim form</div>
-                  <div class="reminder-detail">Signed copy required<br>1 document pending</div>
-                  <div class="reminder-meta">Upload by 24 Oct · Reminder 1 of 2</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            if st.button("Upload", icon=":material/upload_file:", key="insurance_upload", use_container_width=True):
-                add_item_dialog("Discharge document")
+        # Find unconfirmed upcoming appointments that require patient action
+        unconfirmed_appts = [
+            a for a in DATA.get("appointments", [])
+            if a.get("status") not in ("Confirmed", "Completed", "Cancelled")
+        ]
 
-        # Proactive Meal Medication Check Card
+        show_cbc = not st.session_state.get("cbc_done", False)
+        show_insurance = not st.session_state.get("insurance_done", False)
+
         meds_list = DATA.get("medications", [])
         untaken_b = [m for m in meds_list if m.get("meal_timing") == "breakfast" and not m.get("is_taken")]
         untaken_l = [m for m in meds_list if m.get("meal_timing") == "lunch" and not m.get("is_taken")]
@@ -1436,38 +1422,153 @@ def render_patient_portal() -> None:
             active_meal = "Daily Routine"
             active_meds = []
 
-        with reminder_strip.container(border=True, width=340):
-            med_names_str = ", ".join(m["name"] for m in active_meds) if active_meds else "All scheduled meds taken!"
-            st.markdown(
-                f"""
-                <div class="reminder-card secondary">
-                  <div class="reminder-top"><div class="reminder-kicker">Medication · {active_meal}</div><div class="reminder-time">Daily</div></div>
-                  <div class="reminder-title">{active_meal} Meds Check</div>
-                  <div class="reminder-detail">{escape(med_names_str)}<br>Take as instructed with meal</div>
-                  <div class="reminder-meta">Tap to mark taken or confirm in chat</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            if active_meds:
-                if st.button(f"✓ Mark {active_meal} Meds Taken", type="primary", key="quick_mark_meal_taken", use_container_width=True):
-                    record_activity_update("Meal medication taken")
-                    client = INTEGRATIONS.supabase_client()
-                    for m in active_meds:
-                        m["is_taken"] = True
-                        try:
-                            toggle_prescription_taken_in_supabase(client, m["id"], True)
-                        except Exception:
-                            pass
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": f"Confirmed! I've marked your {active_meal} medication ({med_names_str}) as taken. Great job maintaining your prescribed routine!",
-                        "agent": "Medication Agent",
-                    })
-                    st.toast(f"{active_meal} medications marked as taken!", icon="✅")
-                    st.rerun()
-            else:
-                st.button("✓ All Meal Meds Taken", disabled=True, key="all_meds_taken_btn", use_container_width=True)
+        show_med_check = bool(active_meds)
+        has_actionable_items = bool(unconfirmed_appts or show_cbc or show_insurance or show_med_check)
+
+        reminder_strip = st.container(
+            horizontal=True,
+            wrap=False,
+            horizontal_alignment="left",
+            gap="small",
+            key="reminder_carousel",
+        )
+
+        if not has_actionable_items:
+            with reminder_strip.container(border=True, width=420):
+                st.markdown(
+                    """
+                    <div class="reminder-card secondary" style="display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; padding:16px 14px;">
+                      <div style="font-size:24px;">🎉</div>
+                      <div style="font:700 13px/1.2 'Manrope',sans-serif; color:var(--teal-dark); margin-top:5px;">Notification Centre · All Caught Up!</div>
+                      <div style="font-size:10px; color:var(--muted); margin-top:3px;">All appointments confirmed and tasks completed. No pending action needed.</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+        else:
+            # 1. Unconfirmed Appointments (Pending action: Confirm attendance or reschedule)
+            if unconfirmed_appts:
+                target_appt = unconfirmed_appts[0]
+                with reminder_strip.container(border=True, width=340):
+                    st.markdown(
+                        f"""
+                        <div class="reminder-card primary">
+                          <div class="reminder-top">
+                            <div class="reminder-kicker">Appointment · Action Needed</div>
+                            <div class="reminder-time">In 2 days</div>
+                          </div>
+                          <div class="reminder-title">{escape(target_appt['type'])}</div>
+                          <div class="reminder-detail">{escape(target_appt['doctor'])} · {escape(target_appt['date'])}<br>{escape(target_appt['time'])} · {escape(target_appt['location'])}</div>
+                          <div class="reminder-meta">Attendance pending confirmation · Bring reports</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    action_a, action_b = st.columns(2, gap="small")
+                    with action_a:
+                        if st.button("✓ Confirm", type="primary", key="confirm_reminder", use_container_width=True):
+                            target_appt["status"] = "Confirmed"
+                            try:
+                                update_appointment_in_supabase(
+                                    INTEGRATIONS.supabase_client(),
+                                    target_appt["id"],
+                                    "Confirmed",
+                                )
+                            except Exception:
+                                pass
+                            record_activity_update("Confirmed appointment attendance")
+                            st.session_state.messages.append(
+                                {
+                                    "role": "assistant",
+                                    "content": f"Your {target_appt['type']} on {target_appt['date']} at {target_appt['time']} with {target_appt['doctor']} has been confirmed! It has been moved to your confirmed schedule and marked done in your notification centre.",
+                                    "agent": "Reminder Agent · Appointments",
+                                }
+                            )
+                            st.toast("Appointment attendance confirmed & marked done!", icon="✅")
+                            st.rerun()
+                    with action_b:
+                        if st.button("Reschedule", key="reschedule_reminder", use_container_width=True):
+                            reschedule_dialog()
+
+            # 2. Diagnostic Reminder
+            if show_cbc:
+                with reminder_strip.container(border=True, width=340):
+                    st.markdown(
+                        """
+                        <div class="reminder-card secondary">
+                          <div class="reminder-top"><div class="reminder-kicker">Diagnostic · Test Needed</div><div class="reminder-time">In 2 days</div></div>
+                          <div class="reminder-title">Complete Blood Count</div>
+                          <div class="reminder-detail">20 Oct · 9:00 AM<br>Ground floor · No fasting</div>
+                          <div class="reminder-meta">Reminder 1 of 2</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    c_a, c_b = st.columns(2, gap="small")
+                    with c_a:
+                        if st.button("View booking", icon=":material/visibility:", key="view_cbc_reminder", use_container_width=True):
+                            record_detail_dialog("diagnostic_booking", DATA["diagnostic_schedule"][0])
+                    with c_b:
+                        if st.button("✓ Mark Done", key="btn_done_cbc", use_container_width=True):
+                            st.session_state.cbc_done = True
+                            st.toast("Diagnostic reminder marked as done!", icon="✅")
+                            st.rerun()
+
+            # 3. Document Upload Reminder
+            if show_insurance:
+                with reminder_strip.container(border=True, width=340):
+                    st.markdown(
+                        """
+                        <div class="reminder-card secondary">
+                          <div class="reminder-top"><div class="reminder-kicker">Document · Pending</div><div class="reminder-time">Due 24 Oct</div></div>
+                          <div class="reminder-title">Insurance claim form</div>
+                          <div class="reminder-detail">Signed copy required<br>1 document pending</div>
+                          <div class="reminder-meta">Upload by 24 Oct · Reminder 1 of 2</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    i_a, i_b = st.columns(2, gap="small")
+                    with i_a:
+                        if st.button("Upload", icon=":material/upload_file:", key="insurance_upload", use_container_width=True):
+                            add_item_dialog("Discharge document")
+                    with i_b:
+                        if st.button("✓ Mark Done", key="btn_done_insurance", use_container_width=True):
+                            st.session_state.insurance_done = True
+                            st.toast("Insurance requirement marked done!", icon="✅")
+                            st.rerun()
+
+            # 4. Proactive Meal Medication Check Card
+            if show_med_check:
+                with reminder_strip.container(border=True, width=340):
+                    med_names_str = ", ".join(m["name"] for m in active_meds)
+                    st.markdown(
+                        f"""
+                        <div class="reminder-card secondary">
+                          <div class="reminder-top"><div class="reminder-kicker">Medication · {active_meal}</div><div class="reminder-time">Daily</div></div>
+                          <div class="reminder-title">{active_meal} Meds Check</div>
+                          <div class="reminder-detail">{escape(med_names_str)}<br>Take as instructed with meal</div>
+                          <div class="reminder-meta">Tap below to mark taken or confirm in chat</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    if st.button(f"✓ Mark {active_meal} Meds Taken", type="primary", key="quick_mark_meal_taken", use_container_width=True):
+                        record_activity_update("Meal medication taken")
+                        client = INTEGRATIONS.supabase_client()
+                        for m in active_meds:
+                            m["is_taken"] = True
+                            try:
+                                toggle_prescription_taken_in_supabase(client, m["id"], True)
+                            except Exception:
+                                pass
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": f"Confirmed! I've marked your {active_meal} medication ({med_names_str}) as taken. Great job maintaining your prescribed routine!",
+                            "agent": "Medication Agent",
+                        })
+                        st.toast(f"{active_meal} medications marked as taken!", icon="✅")
+                        st.rerun()
 
         appointments_tab, diagnostics_tab, medications_tab, discharge_tab = st.tabs(
             ["Appointments", "Diagnostics", "Medication", "Discharge"]
@@ -1727,7 +1828,7 @@ def render_doctor_portal() -> None:
                 <div class="doctor-avatar">{escape(doc.get('initials', 'DR'))}</div>
                 <div>
                   <div style="font:700 16px/1.2 'Manrope',sans-serif;">{escape(doc['name'])}</div>
-                  <div style="font-size:11px; opacity:.8; margin-top:2px;">{escape(doc.get('specialization', 'Specialist'))}</div>
+                  <div style="font-size:10px; opacity:.85; margin-top:2px;">Doctor ID · {escape(short_doctor_id(doc['id']))} · {escape(doc.get('specialization', 'Specialist'))}</div>
                 </div>
               </div>
               <div style="margin-top:12px; padding-top:10px; border-top:1px solid rgba(255,255,255,.15); font-size:10px; opacity:.88; line-height:1.5;">
@@ -2003,11 +2104,11 @@ with top_bar_col3:
     if st.session_state.portal_mode == "patient":
         st.session_state.active_patient_id = "22222222-2222-2222-2222-222222222222"
         st.markdown(
-            """
+            f"""
             <div style="display:flex; justify-content:flex-end; align-items:center; height:100%; padding-top:2px;">
               <div style="background:#E6F4F1; border:1px solid #94D3C5; border-radius:999px; padding:6px 14px; font-size:12px; font-weight:700; color:#075651; display:flex; align-items:center; gap:6px;">
                 <span>👤</span>
-                <span>Ananya Iyer · Patient</span>
+                <span>Ananya Iyer · {short_patient_id(st.session_state.active_patient_id)}</span>
               </div>
             </div>
             """,
@@ -2016,11 +2117,11 @@ with top_bar_col3:
     else:
         st.session_state.active_doctor_id = "11111111-1111-1111-1111-111111111111"
         st.markdown(
-            """
+            f"""
             <div style="display:flex; justify-content:flex-end; align-items:center; height:100%; padding-top:2px;">
               <div style="background:#E6F4F1; border:1px solid #94D3C5; border-radius:999px; padding:6px 14px; font-size:12px; font-weight:700; color:#075651; display:flex; align-items:center; gap:6px;">
                 <span>🩺</span>
-                <span>Dr. Rhea Mehta · Lead Laparoscopic Surgeon</span>
+                <span>Dr. Rhea Mehta · {short_doctor_id(st.session_state.active_doctor_id)}</span>
               </div>
             </div>
             """,

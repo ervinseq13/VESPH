@@ -38,15 +38,15 @@ def generate_record_pdf(
     pdf.set_text_color(255, 255, 255)
     pdf.set_font("Helvetica", "B", 18)
     pdf.set_y(6)
-    pdf.cell(0, 10, "VESPH Care", ln=True, align="C")
+    pdf.cell(0, 10, "VESPH Care", new_x="LMARGIN", new_y="NEXT", align="C")
     pdf.set_font("Helvetica", "", 9)
-    pdf.cell(0, 5, "Virtual Engagement System for Patient Health", ln=True, align="C")
+    pdf.cell(0, 5, "Virtual Engagement System for Patient Health", new_x="LMARGIN", new_y="NEXT", align="C")
 
     # --- Patient & date bar ---
     pdf.set_text_color(23, 53, 50)
     pdf.set_y(34)
     pdf.set_font("Helvetica", "", 9)
-    pdf.cell(0, 5, f"Patient: {patient_name}    |    Generated: {datetime.now().strftime('%d %b %Y, %I:%M %p')}", ln=True)
+    pdf.cell(0, 5, f"Patient: {patient_name}    |    Generated: {datetime.now().strftime('%d %b %Y, %I:%M %p')}", new_x="LMARGIN", new_y="NEXT")
     pdf.line(10, 42, 200, 42)
     pdf.set_y(45)
 
@@ -67,8 +67,8 @@ def generate_record_pdf(
     pdf.set_y(-25)
     pdf.set_font("Helvetica", "I", 7)
     pdf.set_text_color(120, 140, 137)
-    pdf.cell(0, 4, "This document is generated from a synthetic demonstration record.", ln=True, align="C")
-    pdf.cell(0, 4, "It does not replace your doctor or an official hospital record.", ln=True, align="C")
+    pdf.cell(0, 4, "This document is generated from a synthetic demonstration record.", new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.cell(0, 4, "It does not replace your doctor or an official hospital record.", new_x="LMARGIN", new_y="NEXT", align="C")
 
     return pdf.output()
 
@@ -76,7 +76,7 @@ def generate_record_pdf(
 def _section(pdf: FPDF, title: str) -> None:
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(11, 110, 105)
-    pdf.cell(0, 8, title, ln=True)
+    pdf.cell(0, 8, title, new_x="LMARGIN", new_y="NEXT")
     pdf.set_text_color(23, 53, 50)
     pdf.set_font("Helvetica", "", 10)
 
@@ -85,7 +85,7 @@ def _row(pdf: FPDF, label: str, value: str) -> None:
     pdf.set_font("Helvetica", "B", 9)
     pdf.cell(52, 6, label)
     pdf.set_font("Helvetica", "", 9)
-    pdf.cell(0, 6, _safe(value), ln=True)
+    pdf.cell(0, 6, _safe(value), new_x="LMARGIN", new_y="NEXT")
 
 
 def _appointment_pdf(pdf: FPDF, record: dict) -> None:
