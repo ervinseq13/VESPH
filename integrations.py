@@ -25,7 +25,7 @@ from groq import Groq
 from supabase import Client, create_client
 
 
-DEFAULT_GROQ_MODEL = "openai/gpt-oss-20b"
+DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
 
 PATIENT_SYSTEM_PROMPT = (
     "You are VESPH Care, a hospital follow-up assistant for patients. "
@@ -149,7 +149,7 @@ class IntegrationHub:
         if not self.groq_configured:
             raise RuntimeError("Groq is not configured")
         if self._groq is None:
-            self._groq = Groq(api_key=self.settings.groq_api_key, timeout=25.0)
+            self._groq = Groq(api_key=self.settings.groq_api_key, timeout=7.0)
         return self._groq
 
     def supabase_client(self) -> Client:
@@ -261,7 +261,7 @@ class IntegrationHub:
                 model=self.settings.groq_model,
                 messages=messages,
                 temperature=0.2,
-                max_completion_tokens=650,
+                max_tokens=650,
             )
             content = response.choices[0].message.content
             if content and content.strip():
