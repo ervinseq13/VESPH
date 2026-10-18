@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+import re
 from typing import Any
+from uuid import uuid4
 
 from supabase import Client
 
@@ -20,6 +22,97 @@ WORKING_HOURS = [
 SLOT_DURATION_MINS = 15
 BUFFER_MINS = 5
 CADENCE_MINS = SLOT_DURATION_MINS + BUFFER_MINS  # 20 min
+
+
+def short_patient_id(pid: str | None) -> str:
+    """Format a clean, short, professional Patient ID for display (e.g. PID-8421 or PID-2222)."""
+    if not pid:
+        return "PID-8421"
+    clean = str(pid).strip()
+    if clean == "22222222-2222-2222-2222-222222222222" or clean.endswith("2222"):
+        return "PID-8421"
+    clean_no_hyphen = clean.replace("-", "").upper()
+    return f"PID-{clean_no_hyphen[-4:]}"
+
+
+def short_doctor_id(did: str | None) -> str:
+    """Format a clean, short, professional Doctor ID for display (e.g. DOC-RHEA-01 or DOC-1111)."""
+    if not did:
+        return "DOC-RHEA-01"
+    clean = str(did).strip()
+    if clean == "11111111-1111-1111-1111-111111111111" or "1111" in clean:
+        return "DOC-RHEA-01"
+    clean_no_hyphen = clean.replace("-", "").upper()
+    return f"DOC-{clean_no_hyphen[-4:]}"
+
+
+def short_medicine_id(mid: str | None) -> str:
+    """Format a clean, short, professional Medicine ID for display (e.g. MED-6661)."""
+    if not mid:
+        return "MED-6661"
+    clean = str(mid).strip().replace("-", "").upper()
+    return f"MED-{clean[-4:]}"
+
+
+def short_appointment_id(aid: str | None) -> str:
+    """Format a clean, short, professional Appointment ID for display (e.g. APT-1001)."""
+    if not aid:
+        return "APT-1001"
+    clean = str(aid).strip().replace("-", "").upper()
+    return f"APT-{clean[-4:]}"
+
+
+def short_consultation_id(cid: str | None) -> str:
+    """Format a clean, short, professional Consultation ID for display (e.g. CON-1001)."""
+    if not cid:
+        return "CON-1001"
+    clean = str(cid).strip().replace("-", "").upper()
+    return f"CON-{clean[-4:]}"
+
+
+def short_diagnostic_id(did: str | None) -> str:
+    """Format a clean, short, professional Diagnostic/Lab ID for display (e.g. LAB-1001)."""
+    if not did:
+        return "LAB-1001"
+    clean = str(did).strip().replace("-", "").upper()
+    return f"LAB-{clean[-4:]}"
+
+
+VALID_APPOINTMENT_STATUSES = {
+    "Confirmed",
+    "Pending",
+    "Completed",
+    "Cancelled",
+    "Rescheduled",
+}
+
+STATUS_NORMALIZATION_MAP = {
+    "reschedule pending": "Pending",
+    "rescheduled": "Rescheduled",
+    "reschedule": "Pending",
+    "pending confirmation": "Pending",
+    "pending": "Pending",
+    "confirmed": "Confirmed",
+    "cancelled": "Cancelled",
+    "canceled": "Cancelled",
+    "completed": "Completed",
+    "doctor unavailable (reschedule required)": "Cancelled",
+    "doctor unavailable": "Cancelled",
+    "unavailable": "Cancelled",
+}
+
+
+def normalize_appointment_status(status: str | None) -> str:
+    """Normalize any status string to a valid PostgreSQL appointment_status_enum value."""
+    if not status:
+        return "Pending"
+    clean = str(status).strip().lower()
+    if clean in STATUS_NORMALIZATION_MAP:
+        return STATUS_NORMALIZATION_MAP[clean]
+    for valid in VALID_APPOINTMENT_STATUSES:
+        if valid.lower() == clean:
+            return valid
+    return "Pending"
 
 
 def generate_available_slots(
@@ -174,6 +267,7 @@ def fetch_patient_snapshot(client: Client, patient_id: str | None = None) -> dic
         all_appts.append(
             {
                 "id": str(appt["appointment_id"]),
+                "short_id": short_appointment_id(appt["appointment_id"]),
                 "date": d_str,
                 "time": t_str,
                 "datetime_raw": appt.get("appointment_datetime"),
@@ -222,6 +316,7 @@ def fetch_patient_snapshot(client: Client, patient_id: str | None = None) -> dic
         consultations.append(
             {
                 "id": str(c["consultation_id"]),
+                "short_id": short_consultation_id(c["consultation_id"]),
                 "date": c_date,
                 "created_at_raw": c.get("created_at"),
                 "doctor": doc.get("doctor_name", primary_doc_name),
@@ -267,10 +362,17 @@ def fetch_patient_snapshot(client: Client, patient_id: str | None = None) -> dic
             else:
                 timing = "dinner"
 
+        # Clean trailing numbers from brand name if dosage is present (e.g. "Dolo 650" + "650 mg" -> "Dolo 650 mg")
+        clean_brand = re.sub(r"\s*\d+\s*$", "", brand).strip()
+        disp_name = f"{clean_brand} {dosage}".strip() if (clean_brand and dosage) else (f"{brand} {dosage}".strip() if dosage else brand)
+
         medications.append(
             {
                 "id": str(p["prescription_item_id"]),
-                "name": f"{brand} {dosage}".strip(),
+                "medicine_id": str(p.get("medicine_id", "")),
+                "short_id": short_medicine_id(p.get("medicine_id")),
+                "rx_id": f"RX-{str(p['prescription_item_id'])[-4:].upper()}",
+                "name": disp_name,
                 "brand_name": brand,
                 "generic_name": m_info.get("generic_name", ""),
                 "dosage": dosage,
@@ -316,6 +418,7 @@ def fetch_patient_snapshot(client: Client, patient_id: str | None = None) -> dic
                     {
                         "id": str(r["result_id"]),
                         "order_id": str(d["order_id"]),
+                        "short_id": short_diagnostic_id(d["order_id"]),
                         "date": d_date,
                         "name": r.get("test_name", "Diagnostic Test"),
                         "category": r.get("test_category", "Blood Work"),
@@ -653,7 +756,13 @@ def update_appointment_in_supabase(
 ) -> None:
     """Update appointment status or reschedule datetime in Supabase."""
 
-    payload: dict[str, Any] = {"status": status}
+    # If the dates are changing or if status indicates reschedule pending, it should be Pending confirmation
+    if (new_date and new_time) or status.strip().lower() in ("reschedule pending", "pending confirmation", "reschedule"):
+        normalized_status = "Pending"
+    else:
+        normalized_status = normalize_appointment_status(status)
+
+    payload: dict[str, Any] = {"status": normalized_status}
     if new_date and new_time:
         try:
             dt_obj = datetime.strptime(f"{new_date} {new_time}", "%d %b %Y %I:%M %p")
@@ -674,7 +783,7 @@ def cancel_appointment_and_escalate_in_supabase(
     """Cancel an appointment due to doctor unavailability and dispatch an escalation for patient rebooking."""
     try:
         client.table("appointments").update({
-            "status": "Doctor Unavailable (Reschedule Required)",
+            "status": "Cancelled",
             "appointment_summary": f"Cancelled: {reason}. Priority escalation dispatched for patient rebooking.",
         }).eq("appointment_id", appointment_id).execute()
     except Exception:
@@ -693,6 +802,60 @@ def cancel_appointment_and_escalate_in_supabase(
         return res.data[0] if (res and res.data) else ticket_payload
     except Exception:
         return ticket_payload
+
+
+def reschedule_appointment_with_new_record_in_supabase(
+    client: Client,
+    old_appointment_id: str,
+    new_date: str,
+    new_time: str,
+    reason: str = "Rescheduled to new slot",
+) -> dict[str, Any]:
+    """Reschedule by creating a new appointment: marks old as 'Rescheduled' and new as 'Pending'."""
+    old_resp = client.table("appointments").select("*").eq("appointment_id", old_appointment_id).execute()
+    if not old_resp.data:
+        raise ValueError(f"Appointment {old_appointment_id} not found")
+    old_appt = old_resp.data[0]
+
+    # 1. Mark old appointment as Rescheduled
+    notice = f"Rescheduled to {new_date} at {new_time} ({reason})."
+    client.table("appointments").update({
+        "status": "Rescheduled",
+        "appointment_summary": f"{old_appt.get('appointment_summary', '')}\n[Notice]: {notice}".strip(),
+    }).eq("appointment_id", old_appointment_id).execute()
+
+    # 2. Create new appointment marked as Pending
+    new_aid = str(uuid4())
+    try:
+        dt_obj = datetime.strptime(f"{new_date} {new_time}", "%d %b %Y %I:%M %p")
+        iso_dt = dt_obj.isoformat()
+    except Exception:
+        try:
+            dt_obj = datetime.strptime(f"{new_date} {new_time}", "%Y-%m-%d %I:%M %p")
+            iso_dt = dt_obj.isoformat()
+        except Exception:
+            iso_dt = f"{new_date}T10:00:00"
+
+    new_appt_data = {
+        "appointment_id": new_aid,
+        "patient_id": old_appt["patient_id"],
+        "doctor_id": old_appt["doctor_id"],
+        "appointment_type": old_appt.get("appointment_type", "Consultation"),
+        "appointment_datetime": iso_dt,
+        "status": "Pending",
+        "scheduled_by_role": old_appt.get("scheduled_by_role", "Doctor"),
+        "location": old_appt.get("location", "Room 304, OPD Wing B"),
+        "appointment_summary": f"Rescheduled appointment (previous: {old_appt.get('appointment_datetime', '')}). Awaiting patient confirmation.",
+        "reminders_sent_count": 0,
+    }
+    res = client.table("appointments").insert(new_appt_data).execute()
+    return {
+        "old_appointment_id": old_appointment_id,
+        "new_appointment_id": new_aid,
+        "old_status": "Rescheduled",
+        "new_status": "Pending",
+        "new_appointment": res.data[0] if res.data else new_appt_data,
+    }
 
 
 def toggle_prescription_taken_in_supabase(
@@ -941,11 +1104,11 @@ def block_doctor_slot_in_supabase(
                 current_summary = a.get("appointment_summary") or ""
                 updated_summary = f"{current_summary}\n[Notice]: {notice}".strip()
 
-                # Status is Reschedule Pending because the patient must reconfirm or select a new slot
+                # Since the dates are changing, the appointment status is marked as Pending
                 client.table("appointments").update(
                     {
                         "appointment_datetime": new_dt,
-                        "status": "Reschedule Pending",
+                        "status": "Pending",
                         "appointment_summary": updated_summary,
                     }
                 ).eq("appointment_id", a["appointment_id"]).execute()

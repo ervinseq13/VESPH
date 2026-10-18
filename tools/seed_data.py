@@ -437,12 +437,12 @@ PATIENTS_BASELINE = [
 
 # Medicines
 MEDICINES_BASELINE = [
-    {"medicine_id": "66666666-6666-6666-6666-666666666661", "brand_name": "Pantocid 40", "generic_name": "Pantoprazole Sodium", "dosage_form": "Tablet"},
-    {"medicine_id": "66666666-6666-6666-6666-666666666662", "brand_name": "Dolo 650", "generic_name": "Paracetamol", "dosage_form": "Tablet"},
-    {"medicine_id": "66666666-6666-6666-6666-666666666663", "brand_name": "Budecort 200 Inhaler", "generic_name": "Budesonide", "dosage_form": "Inhaler"},
-    {"medicine_id": "66666666-6666-6666-6666-666666666664", "brand_name": "Montair 10", "generic_name": "Montelukast", "dosage_form": "Tablet"},
+    {"medicine_id": "66666666-6666-6666-6666-666666666661", "brand_name": "Pantocid", "generic_name": "Pantoprazole Sodium", "dosage_form": "Tablet"},
+    {"medicine_id": "66666666-6666-6666-6666-666666666662", "brand_name": "Dolo", "generic_name": "Paracetamol", "dosage_form": "Tablet"},
+    {"medicine_id": "66666666-6666-6666-6666-666666666663", "brand_name": "Budecort Inhaler", "generic_name": "Budesonide", "dosage_form": "Inhaler"},
+    {"medicine_id": "66666666-6666-6666-6666-666666666664", "brand_name": "Montair", "generic_name": "Montelukast", "dosage_form": "Tablet"},
     {"medicine_id": "66666666-6666-6666-6666-666666666665", "brand_name": "Orofer XT", "generic_name": "Ferrous Ascorbate + Folic Acid", "dosage_form": "Tablet"},
-    {"medicine_id": "66666666-6666-6666-6666-666666666666", "brand_name": "Shelcal 500", "generic_name": "Calcium + Vitamin D3", "dosage_form": "Tablet"},
+    {"medicine_id": "66666666-6666-6666-6666-666666666666", "brand_name": "Shelcal", "generic_name": "Calcium + Vitamin D3", "dosage_form": "Tablet"},
 ]
 
 # 22 Weekly Appointments for Dr. Rhea Mehta (18-24 Oct 2026)
@@ -556,7 +556,7 @@ DR_RHEA_WEEKLY_APPTS = [
         "appointment_type": "FollowUp",
         "appointment_datetime": "2026-10-22 11:00:00",
         "scheduled_by_role": "Doctor",
-        "status": "Confirmed",
+        "status": "Pending",
         "location": "OPD Wing B, Room 304",
         "reminders_sent_count": 1,
         "appointment_summary": "Post-appendectomy 2-week surgical review, port site healing check, and diet normalization.",
@@ -636,7 +636,7 @@ ANANYA_30_APPTS = [
         "appointment_type": "FollowUp",
         "appointment_datetime": "2026-10-22 11:00:00",
         "scheduled_by_role": "Doctor",
-        "status": "Confirmed",
+        "status": "Pending",
         "location": "OPD Wing B, Room 304",
         "reminders_sent_count": 1,
         "appointment_summary": "Post-appendectomy 2-week surgical review, port site healing check, and diet normalization.",

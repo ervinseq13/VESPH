@@ -36,8 +36,15 @@ class TestDoctorOrchestrator(unittest.TestCase):
         )
         self.assertEqual(classify_doctor_intent("take off on 23rd oct"), "BLOCK_UNAVAILABILITY")
 
-        # Patient inquiry by name
-        self.assertEqual(classify_doctor_intent("Tell me about Neha Kapoor"), "PATIENT_QUERY")
+        # Patient inquiry by name and medications
+        sample_patients = [
+            {"name": "Ananya Iyer", "first_name": "Ananya", "last_name": "Iyer", "patient_id": "22222222-2222-2222-2222-222222222222"},
+            {"name": "Neha Kapoor", "first_name": "Neha", "last_name": "Kapoor", "patient_id": "22222222-2222-2222-2222-222222222002"},
+        ]
+        self.assertEqual(classify_doctor_intent("Tell me about Neha Kapoor", all_patients=sample_patients), "PATIENT_QUERY")
+        self.assertEqual(classify_doctor_intent("Tell me about Neha Kapoor's medications", all_patients=sample_patients), "PATIENT_QUERY")
+        self.assertEqual(classify_doctor_intent("what medication is Ananya Iyer taking?", all_patients=sample_patients), "PATIENT_QUERY")
+        self.assertEqual(classify_doctor_intent("what is Ananya taking?", all_patients=sample_patients), "PATIENT_QUERY")
         self.assertEqual(classify_doctor_intent("who is Vikram Malhotra"), "PATIENT_QUERY")
         self.assertEqual(classify_doctor_intent("patient info / summary"), "PATIENT_QUERY")
 
@@ -61,6 +68,10 @@ class TestDoctorOrchestrator(unittest.TestCase):
             date_str = f"2026-10-{day:02d}"
             day_appts = [a for a in rhea_appts if date_str in a.get("appointment_datetime", "")]
             self.assertEqual(len(day_appts), 2, f"Failed on date {date_str}: expected 2 appointments, got {len(day_appts)}")
+
+        # Verify Ananya Iyer's appointment on 22 Oct 2026 at 11:00 AM is Pending (not-confirmed)
+        ananya_appt = next(a for a in rhea_appts if a.get("appointment_id") == "33333333-3333-3333-3333-333333331001")
+        self.assertEqual(ananya_appt["status"], "Pending")
 
     def test_orchestrator_schedule_query_execution(self):
         """Verify running the orchestrator with a schedule query returns counts and formatted table."""

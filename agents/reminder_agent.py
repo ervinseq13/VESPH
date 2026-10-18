@@ -30,11 +30,12 @@ REMINDER_TERMS = (
     "this week at the hospital", "confirm my visit", "can i change the date",
     "reschedule", "rebook", "move my appointment", "cancel my visit",
     "postpone", "book", "confirm", "reminder", "visit", "clinic", "checkup",
-    # Medication timing
+    # Medication timing & intake reports
     "when do i take", "next dose", "did i take my", "morning pills",
     "evening meds", "what meds with breakfast", "what meds with lunch",
     "what meds with dinner", "should i take it now", "medication reminder",
     "took my medicine", "haven't taken", "forgot my meds", "pill", "tablet",
+    "i took", "took dolo", "took pantocid", "took meds", "took my", "taken", "dolo", "pantocid",
     # Diagnostic scheduling reminders
     "blood test before", "get a test done", "lab before my appointment",
     "doctor told me to get", "test before the visit", "need to schedule a blood",
@@ -78,11 +79,12 @@ def _handle(
             )
         route = "Diagnostic Tests"
 
-    # Branch 2: Medication timing & meal check reminders
+    # Branch 2: Medication timing & meal check reminders / intake reports
     elif any(term in text for term in (
         "next dose", "when do i take", "medication reminder", "morning pills",
         "evening meds", "what meds with breakfast", "what meds with lunch",
-        "what meds with dinner", "did i take", "took my", "forgot my", "medicine"
+        "what meds with dinner", "did i take", "took my", "forgot my", "medicine",
+        "i took", "took dolo", "took pantocid", "took meds", "taken", "dolo", "pantocid"
     )):
         meds = data.get("medications", [])
         b_meds = [m for m in meds if m.get("meal_timing") == "breakfast"]
@@ -106,12 +108,22 @@ def _handle(
 
         if target_list:
             m = target_list[0]
-            status_str = "already marked as taken ✓" if m.get("is_taken") else "scheduled/pending"
-            message = (
-                f"Medication Reminder for {meal_name}: {m['name']} ({m.get('dosage', '')}). "
-                f"Instruction: {m['instruction']}. Current status: {status_str}. "
-                "You can tap the checkbox in your Medications tab to confirm your dose."
+            is_taken_report = any(w in text for w in ["took", "taken", "had my", "finished my", "drank my"]) and not any(
+                neg in text for neg in ["haven't", "forgot", "not yet", "didn't", "did not"]
             )
+            if is_taken_report:
+                m["is_taken"] = True
+                message = (
+                    f"Great job! I've recorded that you took your {m['name']} ({m.get('dosage', '')}) for {meal_name}. "
+                    "Your care record and notification centre have been updated."
+                )
+            else:
+                status_str = "already marked as taken ✓" if m.get("is_taken") else "scheduled/pending"
+                message = (
+                    f"Medication Reminder for {meal_name}: {m['name']} ({m.get('dosage', '')}). "
+                    f"Instruction: {m['instruction']}. Current status: {status_str}. "
+                    "You can tap the checkbox in your Medications tab to confirm your dose."
+                )
         else:
             medication = meds[0] if meds else {"name": "Pantocid 40", "instruction": "Take before breakfast", "next_dose": "Daily"}
             message = (

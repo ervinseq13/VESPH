@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import re
 from typing import Any
 from supabase import Client
 
@@ -10,6 +11,12 @@ from tools.db_tools import (
     block_doctor_slot_in_supabase,
     verify_doctor_unavailability_in_supabase,
     update_appointment_in_supabase,
+    short_patient_id,
+    short_doctor_id,
+    short_medicine_id,
+    short_appointment_id,
+    short_consultation_id,
+    short_diagnostic_id,
 )
 from tools.consultation_ingestion import (
     parse_consultation_text,
@@ -160,9 +167,9 @@ class DoctorAvailabilityAndEscalationAgent:
         rebook_lines = []
         for r in rebooked:
             rebook_lines.append(
-                f"• Appointment `{r['appointment_id'][:8]}...`: Rebooking proposed for **{r['new_date']} at {r['new_slot']}** (*Status: Reschedule Pending*)"
+                f"• Appointment `{short_appointment_id(r.get('appointment_id'))}`: Rebooking proposed for **{r['new_date']} at {r['new_slot']}** (*Status: Pending – Awaiting Patient Confirmation*)"
             )
-        rebook_summary = "\n".join(rebook_lines) if rebook_lines else "• All affected patient appointments set to *Reschedule Pending*."
+        rebook_summary = "\n".join(rebook_lines) if rebook_lines else "• All affected patient appointments set to *Pending (Awaiting Patient Confirmation)*."
 
         verify_badge = "✅ **Verified in Supabase:**" if is_verified else "ℹ️ **Recorded in Supabase:**"
         msg = (
@@ -211,7 +218,7 @@ class DoctorPatientRecordAgent:
 
         if not matched_patient:
             roster_sample = [
-                f"• **{p.get('name')}** (ID: {str(p.get('patient_id', ''))[-4:]}) – {p.get('summary', 'Active OPD patient')}"
+                f"• **{p.get('name')}** (ID: {short_patient_id(p.get('patient_id'))}) – {p.get('summary', 'Active OPD patient')}"
                 for p in all_patients[:5]
             ]
             msg = (
@@ -246,10 +253,18 @@ class DoctorPatientRecordAgent:
                 )
                 rx_rows = rx_res.data or []
                 if rx_rows:
-                    rx_lines = [
-                        f"• **{r.get('medicines', {}).get('medicine_name', 'Medicine')}:** {r.get('dosage', '')} – {r.get('instructions', '')} (*{r.get('meal_timing', 'routine').title()}*)"
-                        for r in rx_rows[:4]
-                    ]
+                    rx_lines = []
+                    for r in rx_rows[:6]:
+                        med_info = r.get("medicines", {}) or {}
+                        brand = med_info.get("brand_name") or med_info.get("medicine_name") or "Medicine"
+                        clean_brand = re.sub(r"\s*\d+\s*$", "", brand).strip()
+                        dosage = (r.get("dosage") or "").strip()
+                        disp_name = f"{clean_brand} {dosage}".strip() if (clean_brand and dosage) else (f"{brand} {dosage}".strip() if dosage else brand)
+                        taken_badge = "✓ Taken" if r.get("is_taken") else "○ Scheduled"
+                        med_id = short_medicine_id(r.get("medicine_id"))
+                        rx_lines.append(
+                            f"• **{disp_name}** (`{med_id}`): {r.get('instructions', '')} (*{r.get('meal_timing', 'routine').title()}* · {taken_badge})"
+                        )
                     facet_sections.append("💊 **Active Medications:**\n" + "\n".join(rx_lines))
                 else:
                     facet_sections.append("💊 **Active Medications:** No active prescription items recorded.")
@@ -260,7 +275,7 @@ class DoctorPatientRecordAgent:
             p_appts = [a for a in all_appointments if str(a.get("patient_id", "")) == str(pid)]
             if p_appts:
                 appt_lines = [
-                    f"• **{a.get('date', 'OPD')} at {a.get('time', '')}:** {a.get('type', 'Consultation')} – *{a.get('status', 'Confirmed')}*"
+                    f"• **{a.get('date', 'OPD')} at {a.get('time', '')}** (`{short_appointment_id(a.get('appointment_id') or a.get('id'))}`): {a.get('type', 'Consultation')} – *{a.get('status', 'Confirmed')}*"
                     for a in p_appts[:3]
                 ]
                 facet_sections.append("📅 **Appointments:**\n" + "\n".join(appt_lines))
@@ -270,7 +285,7 @@ class DoctorPatientRecordAgent:
         facets_text = "\n\n".join(facet_sections)
         msg = (
             f"### Patient Clinical Profile: {p_name}\n"
-            f"**Demographics:** {gender}, {age}y · **Phone:** {phone} · **ID:** `{pid[-8:] if pid else ''}`\n\n"
+            f"**Demographics:** {gender}, {age}y · **Phone:** {phone} · **ID:** `{short_patient_id(pid)}`\n\n"
             f"**Clinical Baseline & Summary:**\n{summary}\n\n"
             f"{facets_text}"
         )

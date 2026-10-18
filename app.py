@@ -32,6 +32,12 @@ from tools.db_tools import (
     toggle_prescription_taken_in_supabase,
     reset_supabase_database,
     generate_available_slots,
+    short_patient_id,
+    short_doctor_id,
+    short_medicine_id,
+    short_appointment_id,
+    short_consultation_id,
+    short_diagnostic_id,
 )
 
 
@@ -39,28 +45,6 @@ ASSET_DIR = Path(__file__).resolve().parent / "assets"
 PATIENT_CHAT_AVATAR = str(ASSET_DIR / "patient-avatar.svg")
 DOCTOR_CHAT_AVATAR = str(ASSET_DIR / "doctor-avatar.svg")
 VESPH_CHAT_AVATAR = str(ASSET_DIR / "vesph-avatar.svg")
-
-
-def short_patient_id(pid: str | None) -> str:
-    """Format a clean, short, professional Patient ID for display."""
-    if not pid:
-        return "PID-8421"
-    clean = str(pid).strip()
-    if "2222" in clean:
-        return "PID-8421"
-    clean_no_hyphen = clean.replace("-", "").upper()
-    return f"PID-{clean_no_hyphen[:5]}"
-
-
-def short_doctor_id(did: str | None) -> str:
-    """Format a clean, short, professional Doctor ID for display."""
-    if not did:
-        return "DOC-RHEA-01"
-    clean = str(did).strip()
-    if "1111" in clean:
-        return "DOC-RHEA-01"
-    clean_no_hyphen = clean.replace("-", "").upper()
-    return f"DOC-{clean_no_hyphen[:5]}"
 
 
 st.set_page_config(
@@ -790,6 +774,69 @@ def is_appointment_past(record: dict, current_date_str: str = "2026-10-18") -> b
 def add_chat_message(prompt: str) -> None:
     st.session_state.messages.append({"role": "user", "content": prompt})
     patient_id = DATA["patient"]["id"]
+
+    # Medication intake detection from patient chat (e.g. "I took dolo", "took pantocid", "taken lunch meds")
+    lowered = prompt.lower().strip()
+    is_med_intake = any(w in lowered for w in ["took", "taken", "had my", "finished my", "drank my"]) and not any(
+        neg in lowered for neg in ["haven't", "forgot", "not yet", "didn't", "did not"]
+    )
+    if is_med_intake:
+        meds = DATA.get("medications", [])
+        matched_med = None
+        for m in meds:
+            b_name = (m.get("brand_name") or "").lower()
+            m_name = (m.get("name") or "").lower()
+            clean_b = re.sub(r"\s*\d+\s*$", "", b_name).strip()
+            if (clean_b and clean_b in lowered) or (b_name and b_name in lowered):
+                matched_med = m
+                break
+            if any(part in lowered for part in m_name.split() if len(part) > 2 and part not in ["tablet", "daily", "mg", "capsule", "inhaler"]):
+                matched_med = m
+                break
+
+        if not matched_med:
+            if "lunch" in lowered or "afternoon" in lowered:
+                l_meds = [m for m in meds if m.get("meal_timing") == "lunch"]
+                if l_meds:
+                    matched_med = l_meds[0]
+            elif "breakfast" in lowered or "morning" in lowered:
+                b_meds = [m for m in meds if m.get("meal_timing") == "breakfast"]
+                if b_meds:
+                    matched_med = b_meds[0]
+
+        if not matched_med:
+            pending = [m for m in meds if not m.get("is_taken")]
+            if pending:
+                matched_med = pending[0]
+
+        if matched_med:
+            matched_med["is_taken"] = True
+            client = INTEGRATIONS.supabase_client()
+            try:
+                toggle_prescription_taken_in_supabase(client, matched_med["id"], True)
+            except Exception:
+                pass
+            record_activity_update(f"Marked {matched_med['name']} taken")
+
+            # Check if all meal meds are taken; if so, dismiss meal check card
+            rem = [m for m in meds if not m.get("is_taken")]
+            if not rem:
+                st.session_state.meds_done_this_session = True
+
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": (
+                        f"Great job! I've marked your **{matched_med['name']}** ({matched_med.get('dosage', '')}) as taken in your hospital record. "
+                        "Your medication card and notification centre have been updated."
+                    ),
+                    "agent": "Medication Agent · Supabase Sync",
+                    "escalated": False,
+                    "escalation": None,
+                }
+            )
+            return
+
     reply = answer_chat(
         ORCHESTRATOR,
         INTEGRATIONS,
@@ -813,32 +860,46 @@ def add_chat_message(prompt: str) -> None:
 
 def format_ingestion_report(res: dict[str, Any], doc_title: str) -> str:
     """Format a comprehensive, structured clinical sync report for doctor chat."""
+    p_name = res.get("patient_name", "Patient")
+    pid = res.get("patient_id")
+    pid_short = short_patient_id(pid)
+    cid = short_consultation_id(res.get("consultation_id"))
+
     md = [
         "### 📑 Consultation Ingested & Database Synchronized",
         f"**Source Document:** {doc_title}  ",
-        f"**Target Patient:** {escape(str(res['patient_name']))} (`{short_patient_id(res['patient_id'])}`)  ",
-        f"**Primary Diagnosis:** {escape(str(res['diagnosis']))}  ",
+        f"**Target Patient:** {escape(str(p_name))} (`{pid_short}`)  ",
+        f"**Primary Diagnosis:** {escape(str(res.get('diagnosis', 'Clinical Consultation')))}  ",
         "",
         "#### 🔄 Live Supabase Updates Applied:",
-        f"- ✅ **Patient Summary Field Updated:** \"{escape(str(res['new_summary']))}\"",
-        f"- ✅ **New Consultation Record Logged:** ID `{str(res['consultation_id'])[:8]}...`",
+        f"- ✅ **Patient Summary Field Updated:** \"{escape(str(res.get('new_summary', '')))}\"",
+        f"- ✅ **New Consultation Record Logged:** ID `{cid}`",
     ]
     if res.get("appointments_created"):
         md.append(f"- ✅ **Follow-up Appointments Scheduled ({len(res['appointments_created'])}):**")
         for a in res["appointments_created"]:
-            md.append(f"  - 📅 **{a['date']} at {a['time']}** ({a['type']}) · {escape(str(a['summary']))}")
+            appt_id_val = a.get("appointment_id") or a.get("id")
+            appt_id_tag = f" (`{short_appointment_id(appt_id_val)}`)" if appt_id_val else ""
+            md.append(f"  - 📅 **{a['date']} at {a['time']}** ({a['type']}){appt_id_tag} · {escape(str(a.get('summary', '')))}")
     if res.get("medications_added"):
         md.append(f"- ✅ **Prescriptions Scheduled by Mealtime ({len(res['medications_added'])}):**")
         for m in res["medications_added"]:
-            meal_icon = "🍳" if m["meal_timing"] == "breakfast" else ("🥗" if m["meal_timing"] == "lunch" else "🍲")
-            md.append(f"  - {meal_icon} **{m['meal_timing'].title()}:** {escape(str(m['name']))} {escape(str(m['dosage']))} · {escape(str(m['instructions']))} ({m['duration_days']} days)")
+            meal_icon = "🍳" if m.get("meal_timing") == "breakfast" else ("🥗" if m.get("meal_timing") == "lunch" else "🍲")
+            med_id_val = m.get("medicine_id") or m.get("id")
+            med_id_tag = f" (`{short_medicine_id(med_id_val)}`)" if med_id_val else ""
+            clean_brand = re.sub(r"\s*\d+\s*$", "", str(m.get("name", ""))).strip()
+            dosage = str(m.get("dosage", "")).strip()
+            disp_name = f"{clean_brand} {dosage}".strip() if (clean_brand and dosage) else (f"{m.get('name', '')} {dosage}".strip() if dosage else str(m.get("name", "")))
+            md.append(f"  - {meal_icon} **{str(m.get('meal_timing', 'routine')).title()}:** {escape(disp_name)}{med_id_tag} · {escape(str(m.get('instructions', '')))} ({m.get('duration_days', 7)} days)")
     if res.get("diagnostics_ordered"):
         md.append(f"- ✅ **Diagnostics Ordered ({len(res['diagnostics_ordered'])}):**")
         for d in res["diagnostics_ordered"]:
-            md.append(f"  - 🔬 **{escape(str(d['name']))}** ({escape(str(d['category']))}) · {escape(str(d.get('summary', '')))}")
+            lab_id_val = d.get("order_id") or d.get("id")
+            lab_id_tag = f" (`{short_diagnostic_id(lab_id_val)}`)" if lab_id_val else ""
+            md.append(f"  - 🔬 **{escape(str(d.get('name', 'Lab Test')))}** ({escape(str(d.get('category', 'Lab')))}){lab_id_tag} · {escape(str(d.get('summary', '')))}")
 
     md.append("")
-    md.append("> 💡 *Switch to **👤 Patient View** above to inspect Ananya's live updated summary, newly scheduled mealtime medications, and confirmed follow-up visit.*")
+    md.append("> 💡 *Switch to **👤 Patient View** above to inspect live updated clinical summary, newly scheduled mealtime medications, and confirmed follow-up visits.*")
     return "\n".join(md)
 
 
@@ -886,8 +947,16 @@ def add_doctor_chat_message(prompt: str, doc_snapshot: dict[str, Any]) -> None:
     client = INTEGRATIONS.supabase_client()
     all_patients = fetch_all_patients(client)
     patients_summary = [
-        {"patient_id": p.get("patient_id"), "name": p.get("name"), "age": p.get("age"), "gender": p.get("gender"), "summary": p.get("summary")}
-        for p in all_patients[:25]
+        {
+            "patient_id": p.get("patient_id"),
+            "name": p.get("name"),
+            "first_name": p.get("first_name"),
+            "last_name": p.get("last_name"),
+            "age": p.get("age"),
+            "gender": p.get("gender"),
+            "summary": p.get("summary"),
+        }
+        for p in all_patients
     ]
 
     all_doctor_appts = doc_snapshot.get("all_appointments", [])
@@ -1177,6 +1246,7 @@ def record_detail_dialog(record_type: str, record: dict) -> None:
               <div class="detail-cell"><strong>Doctor</strong>{escape(record['doctor'])}</div>
               <div class="detail-cell"><strong>Department</strong>{escape(record['department'])}</div>
               <div class="detail-cell"><strong>Location</strong>{escape(record['location'])}</div>
+              <div class="detail-cell"><strong>Appointment ID</strong>{escape(short_appointment_id(record.get('id')))}</div>
               <div class="detail-cell"><strong>Patient ID</strong>{escape(short_patient_id(DATA['patient']['id']))}</div>
             </div>
             """,
@@ -1255,41 +1325,46 @@ def record_detail_dialog(record_type: str, record: dict) -> None:
                             st.rerun()
                 else:
                     st.warning("No alternate schedule dates available.")
-        filename = f"{record['id']}.txt"
+        filename = f"appointment-{short_appointment_id(record['id'])}.txt"
     elif record_type == "diagnostic_booking":
         st.subheader(record["test"])
-        st.caption(f"{record['date']} · {record['time']} · {record['status']}")
+        st.caption(f"{record['date']} · {record['time']} · {record['status']} · ID: {short_diagnostic_id(record.get('id'))}")
         st.markdown(
             f"""
             <div class="detail-grid">
               <div class="detail-cell"><strong>Location</strong>{escape(record['location'])}</div>
               <div class="detail-cell"><strong>Preparation</strong>{escape(record['preparation'])}</div>
+              <div class="detail-cell"><strong>Booking ID</strong>{escape(short_diagnostic_id(record.get('id')))}</div>
+              <div class="detail-cell"><strong>Patient ID</strong>{escape(short_patient_id(DATA['patient']['id']))}</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        filename = f"{record['id']}.txt"
+        filename = f"diagnostic-{short_diagnostic_id(record['id'])}.txt"
     elif record_type == "diagnostic_result":
+        diag_id = short_diagnostic_id(record.get("order_id") or record.get("id"))
         st.subheader(record["name"])
-        st.caption(f"{record['date']} · {record['category']} · {record['status']}")
+        st.caption(f"{record['date']} · {record['category']} · {record['status']} · ID: {diag_id}")
         st.write(record["summary"])
         st.info(f"Ordered by {record['ordered_by']} · {record['flag']}")
-        filename = f"{record['id']}.txt"
+        filename = f"lab-report-{diag_id}.txt"
     elif record_type == "medication":
+        med_id = short_medicine_id(record.get("medicine_id") or record.get("id"))
         st.subheader(record["name"])
-        st.caption(record["status"])
+        st.caption(f"{record['status']} · ID: {med_id}")
         st.markdown(
             f"""
             <div class="detail-grid">
               <div class="detail-cell"><strong>Instructions</strong>{escape(record['instruction'])}</div>
               <div class="detail-cell"><strong>Duration</strong>{escape(record['duration'])}</div>
               <div class="detail-cell"><strong>Next dose</strong>{escape(record['next_dose'])}</div>
+              <div class="detail-cell"><strong>Medicine ID</strong>{escape(med_id)}</div>
               <div class="detail-cell"><strong>Patient ID</strong>{escape(short_patient_id(DATA['patient']['id']))}</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        filename = "medication-record.txt"
+        filename = f"medication-{med_id}.txt"
     elif record_type == "discharge":
         st.subheader("Surgical discharge")
         st.caption(f"{record['discharge_date']} · Completed")
@@ -1544,13 +1619,14 @@ def patient_clinical_chart_dialog(patient_id: str, appointment_data: dict | None
             st.caption("No previous recorded clinical consultations.")
         else:
             for c in consults:
+                c_id = short_consultation_id(c.get("id") or c.get("consultation_id"))
                 st.markdown(
                     f"""
                     <div style="background:white; border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:8px;">
                       <div style="display:flex; justify-content:space-between; align-items:flex-start;">
                         <div>
                           <strong style="font-size:12px; color:var(--ink);">{escape(c.get('diagnosis') or 'Clinical Consultation')}</strong>
-                          <div style="font-size:10px; color:var(--muted); margin-top:2px;">Doctor: {escape(c.get('doctor', 'Dr. Rhea Mehta'))} · {escape(c.get('department', 'OPD'))} · Date: {escape(c.get('date', ''))}</div>
+                          <div style="font-size:10px; color:var(--muted); margin-top:2px;">Doctor: {escape(c.get('doctor', 'Dr. Rhea Mehta'))} · {escape(c.get('department', 'OPD'))} · Date: {escape(c.get('date', ''))} · ID: {escape(c_id)}</div>
                         </div>
                         <span class="micro-pill" style="font-weight:700;">Consultation</span>
                       </div>
@@ -1573,13 +1649,14 @@ def patient_clinical_chart_dialog(patient_id: str, appointment_data: dict | None
             for appt in patient_appts:
                 status_class = "status" if appt.get("status") == "Confirmed" else ("status old" if appt.get("status") == "Completed" else "status wait")
                 notes = appt.get("preparation") or appt.get("summary") or "General clinical follow-up and patient evaluation."
+                appt_id = short_appointment_id(appt.get("id") or appt.get("appointment_id"))
                 st.markdown(
                     f"""
                     <div style="background:#FAFDFC; border:1px solid #D6E7E3; border-radius:10px; padding:10px; margin-bottom:8px;">
                       <div style="display:flex; justify-content:space-between; align-items:center;">
                         <div>
                           <strong style="font-size:12px; color:var(--ink);">📅 {escape(appt.get('date', ''))} at {escape(appt.get('time', ''))}</strong>
-                          <span style="font-size:10px; color:var(--muted); margin-left:6px;">· {escape(appt.get('type', 'Consultation'))}</span>
+                          <span style="font-size:10px; color:var(--muted); margin-left:6px;">· {escape(appt.get('type', 'Consultation'))} ({escape(appt_id)})</span>
                         </div>
                         <span class="{status_class}">{escape(appt.get('status', 'Confirmed'))}</span>
                       </div>
@@ -1602,11 +1679,12 @@ def patient_clinical_chart_dialog(patient_id: str, appointment_data: dict | None
         else:
             for lab in labs:
                 flag = lab.get("flag", "Normal")
+                lab_id = short_diagnostic_id(lab.get("id") or lab.get("order_id"))
                 st.markdown(
                     f"""
                     <div style="background:white; border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:8px;">
                       <div style="display:flex; justify-content:space-between;">
-                        <strong style="font-size:12px; color:var(--ink);">{escape(lab['name'])}</strong>
+                        <strong style="font-size:12px; color:var(--ink);">{escape(lab['name'])} ({escape(lab_id)})</strong>
                         <span class="status">{escape(lab.get('category', 'Lab'))}</span>
                       </div>
                       <div style="font-size:11px; color:#3F5D58; margin-top:4px;"><strong>Result:</strong> {escape(lab.get('result_value') or lab.get('summary', ''))}</div>
@@ -1622,10 +1700,11 @@ def patient_clinical_chart_dialog(patient_id: str, appointment_data: dict | None
             st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
             st.markdown('<div class="timeline-label">ASSOCIATED DIAGNOSTIC APPOINTMENTS</div>', unsafe_allow_html=True)
             for da in diag_appts:
+                da_id = short_diagnostic_id(da.get("id") or da.get("appointment_id"))
                 st.markdown(
                     f"""
                     <div style="background:#F6FAF9; border:1px solid #D1E5E2; border-radius:8px; padding:8px 10px; margin-bottom:6px; font-size:11px;">
-                      <strong>{escape(da.get('date', ''))} at {escape(da.get('time', ''))}</strong> · {escape(da.get('type', ''))} ({escape(da.get('status', ''))})
+                      <strong>{escape(da.get('date', ''))} at {escape(da.get('time', ''))}</strong> · {escape(da.get('type', ''))} ({escape(da_id)}) ({escape(da.get('status', ''))})
                       <div style="font-size:10px; color:var(--muted); margin-top:2px;">Location: {escape(da.get('location', 'Hospital Lab'))} · Notes: {escape(da.get('preparation', ''))}</div>
                     </div>
                     """,
@@ -1668,6 +1747,7 @@ def patient_clinical_chart_dialog(patient_id: str, appointment_data: dict | None
             st.caption("No active medications prescribed.")
         else:
             for m in meds:
+                med_id = short_medicine_id(m.get("medicine_id") or m.get("id"))
                 meal_tag = m.get("meal_timing", "general").capitalize()
                 taken_str = "✓ Taken" if m.get("is_taken") else "○ Pending"
                 st.markdown(
@@ -1675,7 +1755,8 @@ def patient_clinical_chart_dialog(patient_id: str, appointment_data: dict | None
                     <div class="med-row">
                       <div>
                         <strong style="font-size:12px; color:var(--ink);">{escape(m['name'])}</strong>
-                        <div style="font-size:10px; color:var(--muted);">{escape(m.get('instruction', ''))} · {escape(m.get('duration', ''))}</div>
+                        <span class="micro-pill" style="font-size:10px; color:var(--teal-dark); font-weight:700; margin-left:4px;">{escape(med_id)}</span>
+                        <div style="font-size:10px; color:var(--muted); margin-top:2px;">{escape(m.get('instruction', ''))} · {escape(m.get('duration', ''))}</div>
                       </div>
                       <div style="text-align:right;">
                         <span class="micro-pill" style="background:#EBF5F3; color:#0B6E69; font-weight:700;">{meal_tag}</span>
@@ -1830,12 +1911,12 @@ def render_patient_portal() -> None:
             active_meal = "Dinner"
             active_meds = untaken_d
         else:
-            # All meds marked taken in DB — still show a summary reminder unless user dismissed this session
-            active_meal = "Today"
-            active_meds = meds_list  # Show all meds in the card when none are pending
+            active_meal = None
+            active_meds = []
 
-        # Show medication card if meds exist and user hasn't explicitly dismissed it this session
-        show_med_check = bool(meds_list) and not st.session_state.get("meds_done_this_session", False)
+        # Show medication card only if there are pending untaken meds for a meal and not dismissed this session
+        has_pending_meal_meds = bool(untaken_b or untaken_l or untaken_d)
+        show_med_check = has_pending_meal_meds and not st.session_state.get("meds_done_this_session", False)
         has_actionable_items = bool(show_med_check or target_appt or show_cbc or show_insurance)
 
         reminder_strip = st.container(
@@ -1860,7 +1941,7 @@ def render_patient_portal() -> None:
                 )
         else:
             # 1. Proactive Meal Medication Check Card (FIRST IN NOTIFICATION CENTRE)
-            if show_med_check:
+            if show_med_check and active_meds:
                 with reminder_strip.container(border=True, width=340):
                     med_names_str = ", ".join(m["name"] for m in active_meds)
                     st.markdown(
@@ -2007,7 +2088,7 @@ def render_patient_portal() -> None:
                 for appointment in records:
                     record_card(
                         title=appointment["type"],
-                        meta=f"{appointment['date']} · {appointment['time']} · {appointment['doctor']} · {appointment['status']}",
+                        meta=f"{appointment['date']} · {appointment['time']} · {appointment['doctor']} · {short_appointment_id(appointment['id'])} · {appointment['status']}",
                         key=f"appointment_card_{appointment['id']}",
                         record_type="appointment",
                         record=appointment,
@@ -2026,7 +2107,7 @@ def render_patient_portal() -> None:
                     continue
                 record_card(
                     title=scheduled["test"],
-                    meta=f"{scheduled['date']} · {scheduled['time']} · {scheduled['location']} · {scheduled['status']}",
+                    meta=f"{scheduled['date']} · {scheduled['time']} · {scheduled['location']} · {short_diagnostic_id(scheduled['id'])} · {scheduled['status']}",
                     key=f"diagnostic_booking_card_{scheduled['id']}",
                     record_type="diagnostic_booking",
                     record=scheduled,
@@ -2037,7 +2118,7 @@ def render_patient_portal() -> None:
             for report in DATA["diagnostics"]:
                 record_card(
                     title=report["name"],
-                    meta=f"{report['date']} · {report['category']} · {report['status']}",
+                    meta=f"{report['date']} · {report['category']} · {short_diagnostic_id(report.get('order_id') or report['id'])} · {report['status']}",
                     key=f"diagnostic_result_card_{report['id']}",
                     record_type="diagnostic_result",
                     record=report,
@@ -2074,9 +2155,10 @@ def render_patient_portal() -> None:
                         is_taken = medication.get("is_taken", False)
                         col_info, col_btn = st.columns([3.2, 1.2], gap="small")
                         with col_info:
+                            med_mid = short_medicine_id(medication.get("medicine_id") or medication.get("id"))
                             record_card(
                                 title=medication["name"],
-                                meta=f"{medication['instruction']} · {medication.get('duration', '')}",
+                                meta=f"{med_mid} · {medication['instruction']} · {medication.get('duration', '')}",
                                 key=f"med_card_{meal_key}_{index}",
                                 record_type="medication",
                                 record=medication,
@@ -2440,7 +2522,7 @@ def render_doctor_portal() -> None:
                             <div style="display:flex; align-items:center; gap:8px;">
                               <span class="agenda-time">{escape(appt_time)}</span>
                               <strong style="font-size:13px; color:var(--ink);">{escape(p_name)}</strong>
-                              <span style="font-size:10px; color:var(--muted);">({escape(p_gender)}, {p_age}y) · ID: {escape(p_id[-4:] if p_id else '')}</span>
+                              <span style="font-size:10px; color:var(--muted);">({escape(p_gender)}, {p_age}y) · {escape(short_patient_id(p_id))}</span>
                             </div>
                             <div style="display:flex; gap:6px; align-items:center;">
                               <span class="micro-pill" style="font-weight:700;">{escape(appt_type)}</span>
@@ -2448,7 +2530,7 @@ def render_doctor_portal() -> None:
                             </div>
                           </div>
                           <div style="margin-top:6px; font-size:11px; color:#425B58; line-height:1.4;">
-                            <strong>Date:</strong> {escape(appt_date)} · <strong>Location:</strong> {escape(appt_loc)} · <strong>Phone:</strong> {escape(p_phone)}
+                            <strong>Date:</strong> {escape(appt_date)} · <strong>Appt:</strong> {escape(short_appointment_id(a.get('id')))} · <strong>Location:</strong> {escape(appt_loc)} · <strong>Phone:</strong> {escape(p_phone)}
                           </div>
                           <div style="margin-top:5px; font-size:11px; color:var(--ink); line-height:1.4;">
                             {escape(appt_sum)}

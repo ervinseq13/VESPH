@@ -99,6 +99,7 @@ def parse_date_safe(
 def classify_doctor_intent(
     query: str,
     pending_action: dict[str, Any] | None = None,
+    all_patients: list[dict[str, Any]] | None = None,
 ) -> str:
     """Classify user query into specialized intent categories."""
     lowered = query.lower().strip()
@@ -122,17 +123,33 @@ def classify_doctor_intent(
     if any(w in lowered for w in ["unavailable", "not available", "leave", "off day", "block", "take off", "clinic off", "unavailability"]):
         return "BLOCK_UNAVAILABILITY"
 
-    # 4. Schedule and appointment query check (handles typos like "what's me schedule")
+    # 4. Check if any known patient name from roster is mentioned in the query
+    # (e.g. "what medication is Ananya Iyer taking?", "Tell me about Neha Kapoor")
+    if all_patients:
+        for p in all_patients:
+            fn = (p.get("first_name") or "").lower().strip()
+            full_name = (p.get("name") or "").lower().strip()
+            ln = (p.get("last_name") or "").lower().strip()
+            if (full_name and full_name in lowered) or \
+               (fn and len(fn) >= 3 and re.search(rf"\b{re.escape(fn)}\b", lowered)) or \
+               (ln and len(ln) >= 4 and re.search(rf"\b{re.escape(ln)}\b", lowered)):
+                return "PATIENT_QUERY"
+
+    # 5. Patient specific inquiry patterns ("Tell me about Neha Kapoor", "what medication is...", "patient summary", "patient info")
+    patient_keywords = [
+        "tell me about", "who is", "patient info", "patient summary", "patient details",
+        "patient chart", "show patient", "medication is", "medications is", "what medication",
+        "what medicine", "is taking", "are taking", "prescribed to", "chart for", "records for"
+    ]
+    if any(pk in lowered for pk in patient_keywords) or "patient" in lowered:
+        return "PATIENT_QUERY"
+
+    # 6. Schedule and appointment query check (handles typos like "what's me schedule")
     schedule_keywords = ["schedule", "agenda", "appointment", "appointments", "booked", "booking", "how many", "slots", "calendar"]
     if any(sk in lowered for sk in schedule_keywords):
         return "CHECK_SCHEDULE"
 
-    # 5. Patient specific inquiry ("Tell me about Neha Kapoor", "patient summary", "patient info")
-    patient_keywords = ["tell me about", "who is", "patient info", "patient summary", "patient details", "patient chart", "show patient"]
-    if any(pk in lowered for pk in patient_keywords) or "patient" in lowered:
-        return "PATIENT_QUERY"
-
-    # 6. Chit-chat / General inquiries / Greeting / Off-topic
+    # 7. Chit-chat / General inquiries / Greeting / Off-topic
     chit_chat_phrases = [
         "hello", "hi", "hey", "good morning", "good afternoon", "good evening",
         "how are you", "who are you", "what can you do", "help", "thanks", "thank you",
@@ -160,9 +177,9 @@ def run_doctor_orchestrator(
     if not all_appts:
         all_appts = doc_snapshot.get("today_appointments", []) + doc_snapshot.get("week_appointments", [])
 
-    all_patients = doc_snapshot.get("patients_overview", [])
+    all_patients = doc_snapshot.get("patients_overview") or doc_snapshot.get("patients", [])
 
-    intent = classify_doctor_intent(query, pending_action=pending_action)
+    intent = classify_doctor_intent(query, pending_action=pending_action, all_patients=all_patients)
     extracted_date = parse_date_safe(query, default_month_num=10, default_year=2026)
 
     # ── Intent: Confirmation of Pending Action ──

@@ -24,7 +24,7 @@ class TestPatientOrchestrator(unittest.TestCase):
                     "date": "26 Oct 2026",
                     "time": "10:00 AM",
                     "location": "OPD Wing B, Room 304",
-                    "status": "Reschedule Pending",
+                    "status": "Rescheduled",
                     "preparation": "Bring previous discharge summary and CBC report",
                 }
             ],
@@ -73,6 +73,32 @@ class TestPatientOrchestrator(unittest.TestCase):
         self.assertIn("26 Oct 2026", res.message)
         self.assertIn("confirm", res.message.lower())
 
+    def test_reminder_agent_medication_intake_confirmed(self):
+        """Verify reminder agent acknowledges taking medication and updates is_taken."""
+        dolo_med = next(m for m in self.care_data["medications"] if "Dolo" in m["name"])
+        self.assertFalse(dolo_med["is_taken"])
+        res = run(self.orchestrator, "I took dolo", self.care_data, "22222222-2222-2222-2222-222222222222")
+        self.assertIn("recorded that you took", res.message)
+        self.assertTrue(dolo_med["is_taken"])
+
+    def test_appointment_status_enum_normalization(self):
+        """Verify all variants map strictly to PostgreSQL appointment_status_enum allowed values."""
+        from tools.db_tools import normalize_appointment_status, VALID_APPOINTMENT_STATUSES
+
+        self.assertEqual(normalize_appointment_status("Reschedule Pending"), "Pending")
+        self.assertEqual(normalize_appointment_status("rescheduled"), "Rescheduled")
+        self.assertEqual(normalize_appointment_status("Doctor Unavailable (Reschedule Required)"), "Cancelled")
+        self.assertEqual(normalize_appointment_status("Pending Confirmation"), "Pending")
+        self.assertEqual(normalize_appointment_status("confirmed"), "Confirmed")
+        self.assertEqual(normalize_appointment_status("canceled"), "Cancelled")
+        self.assertEqual(normalize_appointment_status("unknown status"), "Pending")
+
+        # Verify all outputs are strictly in VALID_APPOINTMENT_STATUSES
+        for raw in ["Reschedule Pending", "Doctor Unavailable", "Confirmed", "Pending", "Completed", "Cancelled", ""]:
+            norm = normalize_appointment_status(raw)
+            self.assertIn(norm, VALID_APPOINTMENT_STATUSES)
+
 
 if __name__ == "__main__":
     unittest.main()
+

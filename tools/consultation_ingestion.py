@@ -20,6 +20,15 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 from pypdf import PdfReader
 from supabase import Client
 
+from tools.db_tools import (
+    short_patient_id,
+    short_doctor_id,
+    short_medicine_id,
+    short_appointment_id,
+    short_consultation_id,
+    short_diagnostic_id,
+)
+
 
 def extract_text_from_pdf(pdf_source: bytes | io.BytesIO) -> str:
     """Extract full raw text content from PDF bytes using pypdf."""
@@ -170,7 +179,7 @@ def _deterministic_parse(text: str) -> dict[str, Any]:
     meds = []
     if "pantocid" in lowered or "pantoprazole" in lowered:
         meds.append({
-            "brand_name": "Pantocid 40",
+            "brand_name": "Pantocid",
             "generic_name": "Pantoprazole Sodium",
             "dosage": "40 mg",
             "meal_timing": "breakfast",
@@ -180,7 +189,7 @@ def _deterministic_parse(text: str) -> dict[str, Any]:
         })
     if "dolo" in lowered or "paracetamol" in lowered:
         meds.append({
-            "brand_name": "Dolo 650",
+            "brand_name": "Dolo",
             "generic_name": "Paracetamol",
             "dosage": "650 mg",
             "meal_timing": "lunch",
@@ -190,7 +199,7 @@ def _deterministic_parse(text: str) -> dict[str, Any]:
         })
     if "multivitamin" in lowered or "zinc" in lowered or "shelcal" in lowered:
         meds.append({
-            "brand_name": "Shelcal 500",
+            "brand_name": "Shelcal",
             "generic_name": "Calcium + Vitamin D3 + Zinc",
             "dosage": "500 mg",
             "meal_timing": "dinner",
@@ -202,7 +211,7 @@ def _deterministic_parse(text: str) -> dict[str, Any]:
     # Default fallback meds if none matched
     if not meds:
         meds.append({
-            "brand_name": "Pantocid 40",
+            "brand_name": "Pantocid",
             "generic_name": "Pantoprazole Sodium",
             "dosage": "40 mg",
             "meal_timing": "breakfast",
@@ -402,6 +411,7 @@ def ingest_consultation_to_supabase(
 
             meds_added.append({
                 "id": presc_id,
+                "medicine_id": med_id,
                 "name": brand,
                 "dosage": med.get("dosage", ""),
                 "meal_timing": meal,
@@ -441,6 +451,7 @@ def ingest_consultation_to_supabase(
 
             diags_ordered.append({
                 "id": ord_id,
+                "order_id": ord_id,
                 "name": t_name,
                 "category": t_cat,
                 "summary": diag.get("summary", ""),
@@ -556,10 +567,10 @@ def format_ingestion_report(res: dict[str, Any], doc_title: str) -> str:
     """Format a comprehensive, structured clinical sync report for doctor chat."""
     p_name = res.get("patient_name", "Patient")
     pid = str(res.get("patient_id", ""))
-    pid_short = f"PID-{pid.replace('-', '').upper()[:5]}" if pid else "PID-8421"
+    pid_short = short_patient_id(pid)
     diagnosis = res.get("diagnosis", "Clinical Consultation")
     new_summary = res.get("new_summary", "Updated patient clinical trajectory.")
-    cid = str(res.get("consultation_id", ""))[:8]
+    cid = short_consultation_id(res.get("consultation_id"))
 
     md = [
         "### 📑 Consultation Ingested & Database Synchronized",
@@ -569,21 +580,28 @@ def format_ingestion_report(res: dict[str, Any], doc_title: str) -> str:
         "",
         "#### 🔄 Live Supabase Updates Applied:",
         f"- ✅ **Patient Summary Field Updated:** \"{new_summary}\"",
-        f"- ✅ **New Consultation Record Logged:** ID `{cid}...`",
+        f"- ✅ **New Consultation Record Logged:** ID `{cid}`",
     ]
     if res.get("appointments_created"):
         md.append(f"- ✅ **Follow-up Appointments Scheduled ({len(res['appointments_created'])}):**")
         for a in res["appointments_created"]:
-            md.append(f"  - 📅 **{a['date']} at {a['time']}** ({a['type']}) · {a.get('summary', '')}")
+            aid_badge = f" (`{short_appointment_id(a.get('id') or a.get('appointment_id'))}`)"
+            md.append(f"  - 📅 **{a['date']} at {a['time']}** ({a['type']}){aid_badge} · {a.get('summary', '')}")
     if res.get("medications_added"):
         md.append(f"- ✅ **Prescriptions Scheduled by Mealtime ({len(res['medications_added'])}):**")
         for m in res["medications_added"]:
             meal_icon = "🍳" if m.get("meal_timing") == "breakfast" else ("🥗" if m.get("meal_timing") == "lunch" else "🍲")
-            md.append(f"  - {meal_icon} **{str(m.get('meal_timing', 'daily')).title()}:** {m.get('name')} {m.get('dosage')} · {m.get('instructions')} ({m.get('duration_days', 7)} days)")
+            mid_val = m.get('medicine_id') or m.get('id')
+            mid_badge = f" (`{short_medicine_id(mid_val)}`)" if mid_val else ""
+            clean_name = re.sub(r"\s*\d+\s*$", "", m.get("name", "")).strip()
+            dosage = (m.get("dosage") or "").strip()
+            disp_name = f"{clean_name} {dosage}".strip() if (clean_name and dosage) else (f"{m.get('name', '')} {dosage}".strip() if dosage else m.get("name", ""))
+            md.append(f"  - {meal_icon} **{str(m.get('meal_timing', 'daily')).title()}:** {disp_name}{mid_badge} · {m.get('instructions')} ({m.get('duration_days', 7)} days)")
     if res.get("diagnostics_ordered"):
         md.append(f"- ✅ **Diagnostics Ordered ({len(res['diagnostics_ordered'])}):**")
         for d in res["diagnostics_ordered"]:
-            md.append(f"  - 🔬 **{d.get('name')}** ({d.get('category')}) · {d.get('summary', '')}")
+            did_badge = f" (`{short_diagnostic_id(d.get('id') or d.get('order_id'))}`)"
+            md.append(f"  - 🔬 **{d.get('name')}** ({d.get('category')}){did_badge} · {d.get('summary', '')}")
 
     md.append("")
     md.append("> 💡 *Switch to **👤 Patient View** above to inspect live updated clinical summary, newly scheduled mealtime medications, and confirmed follow-up visits.*")
