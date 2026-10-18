@@ -272,21 +272,34 @@ div[data-testid="stMetricValue"] { font-size:16px; }
   }
   [data-testid="stColumn"]:has(.right-panel-marker) {
     position: relative;
+    height: calc(100vh - 82px);
     max-height: calc(100vh - 82px);
+    overflow: hidden;
+  }
+  [data-testid="stColumn"]:has(.right-panel-marker) > [data-testid="stVerticalBlock"] {
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100% !important;
+    max-height: 100% !important;
+    justify-content: space-between !important;
+    gap: 4px !important;
   }
   .stApp .st-key-chat_history,
   .stApp .st-key-doctor_chat_history {
-    height: calc(100vh - 265px) !important;
-    min-height: 180px !important;
-    max-height: calc(100vh - 265px) !important;
+    flex: 1 1 auto !important;
+    height: calc(100vh - 300px) !important;
+    min-height: 240px !important;
+    max-height: calc(100vh - 300px) !important;
     overflow-y: auto !important;
     padding-bottom: 4px;
   }
   .st-key-chat_dock,
   .st-key-doctor_chat_dock {
+    flex-shrink: 0 !important;
     position: relative !important;
     bottom: auto !important;
-    margin-top: 2px !important;
+    margin-top: auto !important;
+    margin-bottom: 34px !important;
     gap: 3px !important;
   }
   .st-key-chat_dock [data-testid="stVerticalBlock"],
@@ -310,6 +323,35 @@ div[data-testid="stMetricValue"] { font-size:16px; }
 /* Tighten spacing between top bar and content grid */
 .stApp [data-testid="stVerticalBlock"]:has(> [data-testid="stHorizontalBlock"]) {
   gap: 0.35rem !important;
+}
+
+/* Doctor agenda week toggle pills */
+div[data-testid="stRadio"]:has(input[name*="doc_agenda_week_choice"]) {
+  margin-top: -2px !important;
+  margin-bottom: 6px !important;
+}
+div[data-testid="stRadio"]:has(input[name*="doc_agenda_week_choice"]) [role="radiogroup"] {
+  gap: 8px !important;
+  flex-wrap: wrap !important;
+}
+div[data-testid="stRadio"]:has(input[name*="doc_agenda_week_choice"]) label {
+  background: #FFFFFF !important;
+  border: 1px solid #B8DFD8 !important;
+  border-radius: 999px !important;
+  padding: 3px 12px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  color: #075651 !important;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+div[data-testid="stRadio"]:has(input[name*="doc_agenda_week_choice"]) label:hover {
+  background: #E8F4F2 !important;
+}
+div[data-testid="stRadio"]:has(input[name*="doc_agenda_week_choice"]) label:has(input:checked) {
+  background: #0B6E69 !important;
+  color: #FFFFFF !important;
+  border-color: #0B6E69 !important;
 }
 
 /* Top bar reset button pill styling */
@@ -567,7 +609,7 @@ def initialize_state() -> None:
         lunch_meds = [m["name"] for m in meds if m.get("meal_timing") == "lunch"]
 
         intro_content = (
-            f"Hi {p_name} — I have your live hospital record ready from Supabase. "
+            f"Hi {p_name} — I have your live hospital record ready. "
             "I can help with your recovery summary, appointments, reports, or medicines."
         )
         if breakfast_meds or lunch_meds:
@@ -774,16 +816,40 @@ def add_doctor_chat_message(prompt: str, doc_snapshot: dict[str, Any]) -> None:
         })
         return
 
+    client = INTEGRATIONS.supabase_client()
+    all_patients = fetch_all_patients(client)
+    patients_summary = [
+        {"id": p.get("patient_id"), "name": p.get("name"), "age": p.get("age"), "gender": p.get("gender"), "summary": p.get("summary")}
+        for p in all_patients[:22]
+    ]
+
+    all_doctor_appts = doc_snapshot.get("all_appointments", [])
+    if not all_doctor_appts:
+        all_doctor_appts = doc_snapshot.get("today_appointments", []) + doc_snapshot.get("week_appointments", [])
+
     doc_care_data = {
         "doctor": doc_snapshot.get("doctor", {}),
-        "appointments": doc_snapshot.get("today_appointments", []) + doc_snapshot.get("week_appointments", []),
+        "appointments": all_doctor_appts,
+        "today_appointments": doc_snapshot.get("today_appointments", []),
+        "week_appointments": doc_snapshot.get("week_appointments", []),
         "stats": doc_snapshot.get("stats", {}),
         "unavailability": doc_snapshot.get("unavailability", []),
-        "patient": DATA.get("patient", {}),
-        "medications": DATA.get("medications", []),
-        "diagnostics": DATA.get("diagnostics", []),
-        "discharge": DATA.get("discharge", {}),
+        "patients_overview": patients_summary,
     }
+
+    # Only include specific patient chart if doctor explicitly asked about that patient
+    lowered_q = prompt.lower()
+    for p in all_patients:
+        if p.get("name", "").lower() in lowered_q or (p.get("first_name", "").lower() in lowered_q and len(p.get("first_name", "")) > 3):
+            doc_care_data["active_patient_chart"] = {
+                "name": p.get("name"),
+                "summary": p.get("summary"),
+                "age": p.get("age"),
+                "gender": p.get("gender"),
+                "allergies": p.get("allergies"),
+                "chronic_conditions": p.get("chronic_conditions"),
+            }
+            break
 
     reply = INTEGRATIONS.answer_with_groq(
         prompt,
@@ -793,14 +859,33 @@ def add_doctor_chat_message(prompt: str, doc_snapshot: dict[str, Any]) -> None:
     )
     if not reply:
         doc_name = doc_snapshot.get("doctor", {}).get("name", "Dr. Rhea Mehta")
-        today_cnt = len(doc_snapshot.get("today_appointments", []))
-        week_cnt = len(doc_snapshot.get("week_appointments", []))
-        reply = (
-            f"**Clinical Status Overview for {escape(doc_name)}:**\n\n"
-            f"• **Today's OPD Consultations:** {today_cnt} patients scheduled\n"
-            f"• **Weekly Workload:** {week_cnt} appointments on agenda (18–24 Oct 2026)\n"
-            "You can ask about upcoming appointments, clinic offs and blocked slots, or your patients' clinical charts and medications."
-        )
+        # Context-aware schedule check for availability/offs on a date
+        matched_date_appts = []
+        for a in all_doctor_appts:
+            dt_raw = str(a.get("raw_datetime") or a.get("date") or "")
+            for day_num in range(1, 32):
+                day_pat = f"{day_num:02d}"
+                if (f"{day_num}th" in lowered_q or f"{day_num}st" in lowered_q or f"{day_num}nd" in lowered_q or f"{day_num}rd" in lowered_q or f" {day_num} " in f" {lowered_q} "):
+                    if f"-10-{day_pat}" in dt_raw or f"{day_num} oct" in dt_raw.lower():
+                        matched_date_appts.append(a)
+
+        if ("available" in lowered_q or "off" in lowered_q or "leave" in lowered_q or "block" in lowered_q) and matched_date_appts:
+            lines = [f"• **{a.get('time', 'OPD')}:** {escape(a.get('patient_name', 'Patient'))} ({escape(a.get('type', 'Consultation'))} - {escape(a.get('summary', ''))})" for a in matched_date_appts]
+            reply = (
+                f"**Schedule Notice for {escape(doc_name)}:**\n\n"
+                f"You have **{len(matched_date_appts)} appointment(s)** scheduled on that date:\n"
+                + "\n".join(lines)
+                + "\n\nWould you like me to block this day in Supabase and trigger priority reschedule escalations for these patients?"
+            )
+        else:
+            today_cnt = len(doc_snapshot.get("today_appointments", []))
+            week_cnt = len(doc_snapshot.get("week_appointments", []))
+            reply = (
+                f"**Clinical Status Overview for {escape(doc_name)}:**\n\n"
+                f"• **Today's OPD Consultations:** {today_cnt} patients scheduled\n"
+                f"• **Weekly Workload:** {week_cnt} appointments on agenda (18–24 Oct 2026)\n"
+                "Ask about upcoming appointments, clinic offs and blocked slots, or patient clinical charts."
+            )
 
     st.session_state.doctor_messages.append({
         "role": "assistant",
@@ -2016,15 +2101,13 @@ def render_patient_portal() -> None:
                 st.rerun()
 
             suggestions = [
-                "Did I take my morning meds?",
-                "What meds with lunch?",
-                "Next appointment?",
-                "My medicines?",
+                "When is my next appointment?",
+                "What meds do I take and when?",
             ]
             with st.container(key="suggestion_row"):
-                suggestion_cols = st.columns(2, gap=None)
+                suggestion_cols = st.columns(2, gap="small")
                 for index, suggestion in enumerate(suggestions):
-                    with suggestion_cols[index % 2]:
+                    with suggestion_cols[index]:
                         if st.button(suggestion, key=f"suggestion_{index}", use_container_width=True):
                             add_chat_message(suggestion)
                             st.rerun()
@@ -2127,90 +2210,69 @@ def render_doctor_portal() -> None:
             if st.button("＋ Schedule Appointment", key="doc_add_appt_btn", type="primary", use_container_width=True):
                 doctor_book_appointment_dialog(doc_id)
 
-        doc_tabs = st.tabs([
-            f"Today (18 Oct) · {len(today_appts)}",
-            f"This Week (18–24 Oct) · {len(week_appts)}",
-        ])
+        week_options_map = {
+            "Previous Week (11–17 Oct)": [
+                ("Mon", "12 Oct 2026", "12 Oct"),
+                ("Tue", "13 Oct 2026", "13 Oct"),
+                ("Wed", "14 Oct 2026", "14 Oct"),
+                ("Thu", "15 Oct 2026", "15 Oct"),
+                ("Fri", "16 Oct 2026", "16 Oct"),
+                ("Sat", "17 Oct 2026", "17 Oct"),
+                ("Sun", "11 Oct 2026", "11 Oct"),
+            ],
+            "This Week (18–24 Oct)": [
+                ("Mon", "19 Oct 2026", "19 Oct"),
+                ("Tue", "20 Oct 2026", "20 Oct"),
+                ("Wed", "21 Oct 2026", "21 Oct"),
+                ("Thu", "22 Oct 2026", "22 Oct"),
+                ("Fri", "23 Oct 2026", "23 Oct"),
+                ("Sat", "24 Oct 2026", "24 Oct"),
+                ("Sun", "18 Oct 2026", "18 Oct"),
+            ],
+            "Next Week (25–31 Oct)": [
+                ("Mon", "26 Oct 2026", "26 Oct"),
+                ("Tue", "27 Oct 2026", "27 Oct"),
+                ("Wed", "28 Oct 2026", "28 Oct"),
+                ("Thu", "29 Oct 2026", "29 Oct"),
+                ("Fri", "30 Oct 2026", "30 Oct"),
+                ("Sat", "31 Oct 2026", "31 Oct"),
+                ("Sun", "25 Oct 2026", "25 Oct"),
+            ],
+            "Week After (01–07 Nov)": [
+                ("Mon", "02 Nov 2026", "02 Nov"),
+                ("Tue", "03 Nov 2026", "03 Nov"),
+                ("Wed", "04 Nov 2026", "04 Nov"),
+                ("Thu", "05 Nov 2026", "05 Nov"),
+                ("Fri", "06 Nov 2026", "06 Nov"),
+                ("Sat", "07 Nov 2026", "07 Nov"),
+                ("Sun", "01 Nov 2026", "01 Nov"),
+            ],
+        }
 
-        # TAB 1: TODAY
-        with doc_tabs[0]:
-            st.markdown('<div class="timeline-label">TODAY\'S APPOINTMENTS (18 OCT 2026)</div>', unsafe_allow_html=True)
-            if not today_appts:
-                st.info("No appointments scheduled for today.")
-            else:
-                for idx, a in enumerate(today_appts):
-                    p_name = a.get("patient_name", "Patient")
-                    p_age = a.get("patient_age", "30")
-                    p_gender = a.get("patient_gender", "F")
-                    p_id = a.get("patient_id", "")
-                    p_phone = a.get("patient_phone", "")
-                    appt_date = a.get("date", "")
-                    appt_time = a.get("time", "")
-                    appt_type = a.get("type", "Consultation")
-                    appt_status = a.get("status", "Confirmed")
-                    appt_loc = a.get("location", "OPD Wing B")
-                    appt_sum = a.get("summary", "")
-                    rebook_notice = a.get("rebook_notice")
+        week_choice = st.radio(
+            "Select Week",
+            list(week_options_map.keys()),
+            index=1,
+            horizontal=True,
+            label_visibility="collapsed",
+            key="doc_agenda_week_choice",
+        )
 
-                    status_badge_class = "status" if appt_status == "Confirmed" else ("status wait" if "Reschedule" in appt_status or "Unavailable" in appt_status else "status old")
-                    notice_html = f'<div class="rebook-notice">⚠️ <strong>Notice:</strong> {escape(rebook_notice)}</div>' if rebook_notice else ""
+        current_week_days = week_options_map[week_choice]
+        day_tab_labels = []
+        for abbr, full_d, match_d in current_week_days:
+            cnt = len([a for a in all_appts if match_d in (a.get("date") or "") or match_d in str(a.get("raw_datetime") or "")])
+            day_tab_labels.append(f"{abbr} ({match_d}) · {cnt}")
 
-                    with st.container():
-                        st.markdown('<div class="agenda-card-wrapper">', unsafe_allow_html=True)
-                        st.markdown(
-                            f"""
-                            <div class="agenda-card">
-                              <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-                                <div style="display:flex; align-items:center; gap:8px;">
-                                  <span class="agenda-time">{escape(appt_time)}</span>
-                                  <strong style="font-size:13px; color:var(--ink);">{escape(p_name)}</strong>
-                                  <span style="font-size:10px; color:var(--muted);">({escape(p_gender)}, {p_age}y) · ID: {escape(p_id[-4:] if p_id else '')}</span>
-                                </div>
-                                <div style="display:flex; gap:6px; align-items:center;">
-                                  <span class="micro-pill" style="font-weight:700;">{escape(appt_type)}</span>
-                                  <span class="{status_badge_class}">{escape(appt_status)}</span>
-                                </div>
-                              </div>
-                              <div style="margin-top:6px; font-size:11px; color:#425B58; line-height:1.4;">
-                                <strong>Date:</strong> {escape(appt_date)} · <strong>Location:</strong> {escape(appt_loc)} · <strong>Phone:</strong> {escape(p_phone)}
-                              </div>
-                              <div style="margin-top:5px; font-size:11px; color:var(--ink); line-height:1.4;">
-                                {escape(appt_sum)}
-                              </div>
-                              {notice_html}
-                              <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px; padding-top:6px; border-top:1px dashed #E2ECE9; font-size:10px; color:#0B6E69; font-weight:600;">
-                                <span>🩺 Patient Clinical Chart & Actions</span>
-                                <span>↗ Click card to view details</span>
-                              </div>
-                            </div>
-                            """,
-                            unsafe_allow_html=True,
-                        )
-                        if st.button("Open Chart", key=f"card_today_{idx}_{a['id']}", use_container_width=True):
-                            patient_clinical_chart_dialog(p_id, appointment_data=a)
+        doc_day_tabs = st.tabs(day_tab_labels)
 
-        # TAB 2: THIS WEEK (Clubbed by day/date of the week)
-        with doc_tabs[1]:
-            st.markdown('<div class="timeline-label">WEEKLY APPOINTMENTS BY DAY (18 – 24 OCT 2026)</div>', unsafe_allow_html=True)
-            if not week_appts:
-                st.info("No appointments scheduled for this week.")
-            else:
-                from collections import defaultdict
-                grouped_by_day = defaultdict(list)
-                for a in week_appts:
-                    day_key = a.get("date") or "Scheduled OPD"
-                    grouped_by_day[day_key].append(a)
-
-                for day_label, day_appts in grouped_by_day.items():
-                    st.markdown(
-                        f"""
-                        <div class="agenda-day-header">
-                          <span>📅 {escape(day_label)}</span>
-                          <span class="micro-pill" style="font-weight:700;">{len(day_appts)} appointment(s)</span>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
+        for day_idx, (abbr, full_d, match_d) in enumerate(current_week_days):
+            with doc_day_tabs[day_idx]:
+                day_appts = [a for a in all_appts if match_d in (a.get("date") or "") or match_d in str(a.get("raw_datetime") or "")]
+                st.markdown(f'<div class="timeline-label">{abbr.upper()}, {full_d.upper()} · {len(day_appts)} APPOINTMENT(S)</div>', unsafe_allow_html=True)
+                if not day_appts:
+                    st.info(f"No appointments scheduled for {abbr}, {full_d}.")
+                else:
                     for idx, a in enumerate(day_appts):
                         p_name = a.get("patient_name", "Patient")
                         p_age = a.get("patient_age", "30")
@@ -2259,7 +2321,7 @@ def render_doctor_portal() -> None:
                                 """,
                                 unsafe_allow_html=True,
                             )
-                            if st.button("Open Chart", key=f"card_week_{day_label}_{idx}_{a['id']}", use_container_width=True):
+                            if st.button("Open Chart", key=f"card_{week_choice[:4]}_{abbr}_{idx}_{a['id']}", use_container_width=True):
                                 patient_clinical_chart_dialog(p_id, appointment_data=a)
 
     with doc_right:
@@ -2322,15 +2384,13 @@ def render_doctor_portal() -> None:
                 st.rerun()
 
             doc_suggestions = [
-                "Today's appointments?",
-                "Ananya's current meds?",
-                "Summarize Ananya's recovery",
-                "Weekly schedule & offs",
+                "Appointment summary (today / this week)",
+                "Patient info / summary",
             ]
             with st.container(key="doc_suggestion_row"):
-                s_cols = st.columns(2, gap=None)
+                s_cols = st.columns(2, gap="small")
                 for s_idx, sugg in enumerate(doc_suggestions):
-                    with s_cols[s_idx % 2]:
+                    with s_cols[s_idx]:
                         if st.button(sugg, key=f"doc_sugg_{s_idx}", use_container_width=True):
                             add_doctor_chat_message(sugg, doc_snap)
                             st.rerun()

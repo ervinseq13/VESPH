@@ -152,13 +152,6 @@ class IntegrationHub:
         if not self.groq_configured:
             return None
 
-        record_context = {
-            "patient_summary": care_data.get("patient", {}),
-            "appointments": care_data.get("appointments", []),
-            "diagnostics": care_data.get("diagnostics", []),
-            "medications": care_data.get("medications", []),
-            "discharge": care_data.get("discharge", {}),
-        }
         history = []
         for message in (recent_messages or [])[-6:]:
             role = message.get("role")
@@ -166,19 +159,67 @@ class IntegrationHub:
             if role in {"user", "assistant"} and isinstance(content, str):
                 history.append({"role": role, "content": content[:1200]})
 
+        if persona == "doctor":
+            doc = care_data.get("doctor", {})
+            doc_name = doc.get("name") or doc.get("doctor_name") or "Dr. Rhea Mehta"
+            doc_dept = doc.get("department", "General Surgery")
+            appts = care_data.get("appointments", [])
+            unavail = care_data.get("unavailability", [])
+            patients = care_data.get("patients_overview", [])
+
+            record_context = {
+                "doctor": f"{doc_name} ({doc_dept})",
+                "doctor_room": doc.get("room_no", "Room 304"),
+                "scheduled_appointments": [
+                    {
+                        "date": a.get("date"),
+                        "time": a.get("time"),
+                        "raw_datetime": a.get("raw_datetime"),
+                        "patient_name": a.get("patient_name"),
+                        "type": a.get("type"),
+                        "status": a.get("status"),
+                        "summary": a.get("summary"),
+                    }
+                    for a in appts
+                ],
+                "clinic_offs_and_unavailabilities": unavail,
+                "recent_patient_roster": patients,
+            }
+            if care_data.get("active_patient_chart"):
+                record_context["active_patient_chart"] = care_data.get("active_patient_chart")
+
+            user_content = (
+                f"Clinical & Schedule Context for {doc_name} ({doc_dept}):\n"
+                + json.dumps(record_context, ensure_ascii=False, default=str)
+                + f"\n\nDoctor Query / Statement: {query}\n\n"
+                + "Instructions:\n"
+                + "1. You are the Clinical Assistant for this doctor.\n"
+                + "2. If the doctor mentions availability, clinic offs, or time off (e.g. 'I won't be available on 20th October'): "
+                + "look up the doctor's scheduled appointments for that date, list the affected patients and times, and offer to block the day and trigger reschedule notifications. "
+                + "Do NOT assume or mention Ananya Iyer unless the doctor specifically asked about Ananya.\n"
+                + "3. If the doctor asks for an appointment summary, summarize upcoming bookings by date.\n"
+                + "4. If the doctor asks about a specific patient, summarize that patient's details from the record."
+            )
+        else:
+            p_name = care_data.get("patient", {}).get("first_name", "Patient")
+            record_context = {
+                "patient_summary": care_data.get("patient", {}),
+                "appointments": care_data.get("appointments", []),
+                "diagnostics": care_data.get("diagnostics", []),
+                "medications": care_data.get("medications", []),
+                "discharge": care_data.get("discharge", {}),
+            }
+            user_content = (
+                f"Hospital Care Record for {p_name}:\n"
+                + json.dumps(record_context, ensure_ascii=False, default=str)
+                + f"\n\nPatient question: {query}"
+            )
+
         system_prompt = DOCTOR_SYSTEM_PROMPT if persona == "doctor" else PATIENT_SYSTEM_PROMPT
         messages = [
             {"role": "system", "content": system_prompt},
             *history,
-            {
-                "role": "user",
-                "content": (
-                    "Synthetic patient record:\n"
-                    + json.dumps(record_context, ensure_ascii=False, default=str)
-                    + "\n\nPatient question: "
-                    + query
-                ),
-            },
+            {"role": "user", "content": user_content},
         ]
 
         try:

@@ -74,27 +74,43 @@ def answer_chat(
         patient_id,
         thread_id=thread_id,
     )
-    if deterministic.agent != "Follow-up Assistant · Router":
+
+    # 1. Safety Invariant: Emergency medical escalations always take top precedence
+    if deterministic.escalated:
         return ChatReply(
             message=deterministic.message,
             agent=deterministic.agent,
-            escalated=deterministic.escalated,
+            escalated=True,
             escalation=deterministic.escalation,
         )
 
-    generated = integrations.answer_with_groq(
-        prompt,
-        care_data,
-        recent_messages=recent_messages,
-        persona=persona,
-    )
-    if generated:
-        return ChatReply(
-            message=generated,
-            agent=f"Groq Care Assistant · {integrations.settings.groq_model}",
+    # 2. Contextual Intelligence: If Groq is configured, answer with contextual reasoning
+    if integrations.groq_configured:
+        generated = integrations.answer_with_groq(
+            prompt,
+            care_data,
+            recent_messages=recent_messages,
+            persona=persona,
         )
+        if generated:
+            agent_badge = (
+                f"Groq Clinical Assistant · {integrations.settings.groq_model}"
+                if persona == "doctor"
+                else (
+                    f"Reminder Agent · {integrations.settings.groq_model}"
+                    if "Reminder" in deterministic.agent
+                    else f"Clinical Care Assistant · {integrations.settings.groq_model}"
+                )
+            )
+            return ChatReply(
+                message=generated,
+                agent=agent_badge,
+            )
 
+    # 3. Fallback to deterministic specialist agent
     return ChatReply(
         message=deterministic.message,
         agent=deterministic.agent,
+        escalated=deterministic.escalated,
+        escalation=deterministic.escalation,
     )
