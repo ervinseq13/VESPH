@@ -89,13 +89,28 @@ CSS = """
 }
 
 html, body, [class*="css"] { font-family: "DM Sans", sans-serif; }
-.stApp { background: var(--canvas); color: var(--ink); }
+html, body {
+  height: 100vh;
+  overflow: hidden !important;
+}
+.stApp {
+  background: var(--canvas);
+  color: var(--ink);
+  height: 100vh;
+  overflow: hidden !important;
+}
 .block-container {
   max-width: 1760px;
-  padding-top: 0.85rem !important;
-  padding-bottom: 0.4rem !important;
+  height: 100vh !important;
+  max-height: 100vh !important;
+  padding-top: 0.5rem !important;
+  padding-bottom: 0.25rem !important;
   padding-left: 1.25rem !important;
   padding-right: 1.25rem !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: space-between !important;
+  overflow: hidden !important;
 }
 [data-testid="stHeader"] {
   display: none !important;
@@ -235,53 +250,61 @@ div[data-testid="stMetricValue"] { font-size:16px; }
 .left-panel-marker, .middle-panel-marker, .right-panel-marker { display:none; }
 
 @media (min-width: 901px) {
-  .block-container {
-    min-height: calc(100vh - 1.2rem);
-    padding-bottom: 0.4rem !important;
-  }
   [data-testid="stColumn"]:has(.left-panel-marker) {
-    max-height: calc(100vh - 4.5rem);
+    max-height: calc(100vh - 82px);
     overflow-y: auto;
     scrollbar-gutter: stable;
     padding-right: 4px;
   }
   [data-testid="stColumn"]:has(.middle-panel-marker) {
-    overflow: visible;
+    max-height: calc(100vh - 82px);
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    padding-right: 4px;
   }
   [data-testid="stColumn"]:has(.middle-panel-marker) .stTabs [role="tabpanel"] {
-    height: calc(100vh - 220px);
-    max-height: calc(100vh - 220px);
-    min-height: 240px;
+    height: calc(100vh - 210px);
+    max-height: calc(100vh - 210px);
+    min-height: 200px;
     overflow-y: auto;
     scrollbar-gutter: stable;
     padding-right: 4px;
   }
   [data-testid="stColumn"]:has(.right-panel-marker) {
     position: relative;
-    max-height: calc(100vh - 4.5rem);
+    max-height: calc(100vh - 82px);
   }
   .stApp .st-key-chat_history,
   .stApp .st-key-doctor_chat_history {
-    height: calc(100vh - 285px) !important;
-    min-height: 240px !important;
-    max-height: calc(100vh - 285px) !important;
+    height: calc(100vh - 265px) !important;
+    min-height: 180px !important;
+    max-height: calc(100vh - 265px) !important;
     overflow-y: auto !important;
-    padding-bottom: 6px;
+    padding-bottom: 4px;
   }
   .st-key-chat_dock,
   .st-key-doctor_chat_dock {
     position: relative !important;
     bottom: auto !important;
-    margin-top: 4px !important;
-    gap: 4px !important;
+    margin-top: 2px !important;
+    gap: 3px !important;
   }
   .st-key-chat_dock [data-testid="stVerticalBlock"],
-  .st-key-doctor_chat_dock [data-testid="stVerticalBlock"] { gap: 4px !important; }
+  .st-key-doctor_chat_dock [data-testid="stVerticalBlock"] { gap: 3px !important; }
   .st-key-chat_dock [data-testid="stForm"],
   .st-key-doctor_chat_dock [data-testid="stForm"] { margin: 0 !important; padding: 0 !important; }
   .st-key-chat_dock .safety-note,
-  .st-key-doctor_chat_dock .safety-note { margin-top: 4px !important; }
-  .footer-note { display: block; margin-top: 6px !important; margin-bottom: 2px !important; text-align: center; font-size: 10px; color: #7D8F8C; }
+  .st-key-doctor_chat_dock .safety-note { margin-top: 2px !important; }
+  .footer-note {
+    display: block;
+    text-align: center;
+    font-size: 9.5px;
+    color: #7D8F8C;
+    padding: 2px 0 1px;
+    margin-top: 2px !important;
+    margin-bottom: 0 !important;
+    flex-shrink: 0;
+  }
 }
 
 /* Tighten spacing between top bar and content grid */
@@ -2101,7 +2124,7 @@ def render_doctor_portal() -> None:
             )
         with btn_col:
             st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
-            if st.button("＋ Schedule New Appointment", key="doc_add_appt_btn", type="primary", use_container_width=True):
+            if st.button("＋ Schedule Appointment", key="doc_add_appt_btn", type="primary", use_container_width=True):
                 doctor_book_appointment_dialog(doc_id)
 
         doc_tabs = st.tabs([
