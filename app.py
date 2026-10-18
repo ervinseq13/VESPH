@@ -27,6 +27,7 @@ from tools.db_tools import (
     book_appointment_by_doctor,
     register_patient_and_book,
     update_appointment_in_supabase,
+    cancel_appointment_and_escalate_in_supabase,
     toggle_prescription_taken_in_supabase,
     reset_supabase_database,
     generate_available_slots,
@@ -261,11 +262,11 @@ div[data-testid="stMetricValue"] { font-size:16px; }
   }
   .stApp .st-key-chat_history,
   .stApp .st-key-doctor_chat_history {
-    height: calc(100vh - 390px) !important;
-    min-height: 220px !important;
-    max-height: calc(100vh - 390px) !important;
+    height: calc(100vh - 225px) !important;
+    min-height: 520px !important;
+    max-height: calc(100vh - 225px) !important;
     overflow-y: auto !important;
-    padding-bottom: 4px;
+    padding-bottom: 6px;
   }
   .st-key-chat_dock,
   .st-key-doctor_chat_dock {
@@ -281,6 +282,49 @@ div[data-testid="stMetricValue"] { font-size:16px; }
   .st-key-chat_dock .safety-note,
   .st-key-doctor_chat_dock .safety-note { margin-top: 4px !important; }
   .footer-note { display: block; margin-top: 14px; text-align: center; font-size: 10px; color: #7D8F8C; }
+}
+
+/* Suppress Streamlit's "Press Enter to submit form" overlay popup in text inputs */
+div[data-testid="InputInstructions"],
+div[data-testid="InputInstructions"] > span,
+.stTextInput [data-testid="InputInstructions"],
+div[data-testid="stTextInput"] div:has(> [data-testid="InputInstructions"]) {
+  display: none !important;
+  visibility: hidden !important;
+  height: 0 !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Agenda Card Click Interaction & Day Headers */
+div[data-testid="stVerticalBlock"]:has(> div > .agenda-card-wrapper) {
+  position: relative !important;
+  margin-bottom: 6px !important;
+}
+div[data-testid="stVerticalBlock"]:has(> div > .agenda-card-wrapper) button {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  opacity: 0 !important;
+  z-index: 10 !important;
+  cursor: pointer !important;
+}
+div[data-testid="stVerticalBlock"]:has(> div > .agenda-card-wrapper):hover .agenda-card {
+  border-color: #0B6E69 !important;
+  box-shadow: 0 4px 16px rgba(11, 110, 105, 0.14) !important;
+  transform: translateY(-1px);
+}
+.agenda-day-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 14px 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #DCE7E4;
+  font: 700 12px 'Manrope', sans-serif;
+  color: var(--ink);
 }
 
 div[data-testid="stRadio"] {
@@ -1227,7 +1271,7 @@ def doctor_book_appointment_dialog(doctor_id: str, default_patient_id: str | Non
 
 
 @st.dialog("Patient Clinical Chart", width="large")
-def patient_clinical_chart_dialog(patient_id: str) -> None:
+def patient_clinical_chart_dialog(patient_id: str, appointment_data: dict | None = None) -> None:
     client = INTEGRATIONS.supabase_client()
     try:
         p_snap = fetch_patient_snapshot(client, patient_id)
@@ -1248,7 +1292,7 @@ def patient_clinical_chart_dialog(patient_id: str) -> None:
 
     st.markdown(
         f"""
-        <div class="chart-section">
+        <div class="chart-section" style="margin-bottom:12px;">
           <div class="chart-title">Clinical & Diagnosis Summary</div>
           <div style="font-size:12px; color:var(--ink); line-height:1.45;">{escape(p.get('health_summary', 'Normal recovery'))}</div>
           <div style="margin-top:6px; font-size:11px; color:var(--muted);"><strong>Known Allergies:</strong> {escape(', '.join(p.get('allergies', ['None'])))}</div>
@@ -1257,9 +1301,139 @@ def patient_clinical_chart_dialog(patient_id: str) -> None:
         unsafe_allow_html=True,
     )
 
-    tab_meds, tab_labs, tab_surg = st.tabs(["Active Medications & Meal Timing", "Diagnostic Lab Results", "Surgical & Hospital History"])
+    tab_consults, tab_labs, tab_surg, tab_meds = st.tabs([
+        "📋 Consultations & Visits",
+        "🔬 Diagnostic Labs & Reports",
+        "🏥 Surgical & Hospital History",
+        "💊 Active Prescriptions & Vitals",
+    ])
+
+    with tab_consults:
+        st.markdown('<div class="timeline-label">PREVIOUS CLINICAL CONSULTATIONS</div>', unsafe_allow_html=True)
+        consults = p_snap.get("consultations", [])
+        if not consults:
+            st.caption("No previous recorded clinical consultations.")
+        else:
+            for c in consults:
+                st.markdown(
+                    f"""
+                    <div style="background:white; border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:8px;">
+                      <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                        <div>
+                          <strong style="font-size:12px; color:var(--ink);">{escape(c.get('diagnosis') or 'Clinical Consultation')}</strong>
+                          <div style="font-size:10px; color:var(--muted); margin-top:2px;">Doctor: {escape(c.get('doctor', 'Dr. Rhea Mehta'))} · {escape(c.get('department', 'OPD'))} · Date: {escape(c.get('date', ''))}</div>
+                        </div>
+                        <span class="micro-pill" style="font-weight:700;">Consultation</span>
+                      </div>
+                      <div style="font-size:11px; color:#2E4744; margin-top:6px; line-height:1.45;">
+                        <strong>Symptoms:</strong> {escape(c.get('symptoms') or 'N/A')}<br>
+                        <strong>Treatment Plan:</strong> {escape(c.get('treatment_plan') or 'N/A')}<br>
+                        <strong>Summary:</strong> {escape(c.get('summary') or 'Routine review')}
+                      </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+        st.markdown('<div class="timeline-label">INDIVIDUAL APPOINTMENTS BREAKDOWN (WHAT HAPPENED DURING VISIT)</div>', unsafe_allow_html=True)
+        patient_appts = p_snap.get("appointments", [])
+        if not patient_appts:
+            st.caption("No appointments recorded for this patient.")
+        else:
+            for appt in patient_appts:
+                status_class = "status" if appt.get("status") == "Confirmed" else ("status old" if appt.get("status") == "Completed" else "status wait")
+                notes = appt.get("preparation") or appt.get("summary") or "General clinical follow-up and patient evaluation."
+                st.markdown(
+                    f"""
+                    <div style="background:#FAFDFC; border:1px solid #D6E7E3; border-radius:10px; padding:10px; margin-bottom:8px;">
+                      <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                          <strong style="font-size:12px; color:var(--ink);">📅 {escape(appt.get('date', ''))} at {escape(appt.get('time', ''))}</strong>
+                          <span style="font-size:10px; color:var(--muted); margin-left:6px;">· {escape(appt.get('type', 'Consultation'))}</span>
+                        </div>
+                        <span class="{status_class}">{escape(appt.get('status', 'Confirmed'))}</span>
+                      </div>
+                      <div style="font-size:11px; color:#3F5D58; margin-top:5px;">
+                        <strong>Attending Doctor:</strong> {escape(appt.get('doctor', 'Dr. Rhea Mehta'))} ({escape(appt.get('department', 'OPD'))}) · <strong>Location:</strong> {escape(appt.get('location', 'OPD Room 304'))}
+                      </div>
+                      <div style="font-size:11px; color:var(--ink); margin-top:4px; line-height:1.4;">
+                        <strong>What happened / Visit Notes:</strong> {escape(notes)}
+                      </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+    with tab_labs:
+        st.markdown('<div class="timeline-label">DIAGNOSTIC TEST RESULTS & LAB SUMMARIES</div>', unsafe_allow_html=True)
+        labs = p_snap.get("diagnostics", [])
+        if not labs:
+            st.caption("No diagnostic reports on record.")
+        else:
+            for lab in labs:
+                flag = lab.get("flag", "Normal")
+                st.markdown(
+                    f"""
+                    <div style="background:white; border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:8px;">
+                      <div style="display:flex; justify-content:space-between;">
+                        <strong style="font-size:12px; color:var(--ink);">{escape(lab['name'])}</strong>
+                        <span class="status">{escape(lab.get('category', 'Lab'))}</span>
+                      </div>
+                      <div style="font-size:11px; color:#3F5D58; margin-top:4px;"><strong>Result:</strong> {escape(lab.get('result_value') or lab.get('summary', ''))}</div>
+                      <div style="font-size:10px; color:var(--muted); margin-top:3px;">Reference Range: {escape(lab.get('reference_range', 'Normal'))} · Flag: {escape(flag)} · Date: {escape(lab.get('date', ''))}</div>
+                      <div style="font-size:11px; color:var(--ink); margin-top:4px;"><strong>Summary:</strong> {escape(lab.get('summary', ''))}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+        diag_appts = [a for a in p_snap.get("appointments", []) if "diag" in a.get("type", "").lower() or "lab" in a.get("type", "").lower() or "test" in a.get("type", "").lower()]
+        if diag_appts:
+            st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+            st.markdown('<div class="timeline-label">ASSOCIATED DIAGNOSTIC APPOINTMENTS</div>', unsafe_allow_html=True)
+            for da in diag_appts:
+                st.markdown(
+                    f"""
+                    <div style="background:#F6FAF9; border:1px solid #D1E5E2; border-radius:8px; padding:8px 10px; margin-bottom:6px; font-size:11px;">
+                      <strong>{escape(da.get('date', ''))} at {escape(da.get('time', ''))}</strong> · {escape(da.get('type', ''))} ({escape(da.get('status', ''))})
+                      <div style="font-size:10px; color:var(--muted); margin-top:2px;">Location: {escape(da.get('location', 'Hospital Lab'))} · Notes: {escape(da.get('preparation', ''))}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+    with tab_surg:
+        st.markdown('<div class="timeline-label">SURGICAL PROCEDURE & DISCHARGE SUMMARY</div>', unsafe_allow_html=True)
+        discharge = p_snap.get("discharge", {})
+        if discharge and discharge.get("procedure"):
+            st.markdown(
+                f"""
+                <div style="background:white; border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:10px;">
+                  <strong style="font-size:13px; color:var(--ink);">{escape(discharge.get('procedure', 'Surgical procedure'))}</strong>
+                  <div style="font-size:11px; color:var(--muted); margin-top:3px;">
+                    Date of Discharge: {escape(discharge.get('discharge_date', ''))} · Lead Consultant: {escape(discharge.get('consultant', 'Dr. Rhea Mehta'))} ({escape(discharge.get('department', 'General Surgery'))})
+                  </div>
+                  <div style="font-size:11px; color:#2E4744; margin-top:8px; line-height:1.45;">
+                    <strong>Condition at Discharge:</strong> {escape(discharge.get('condition_at_discharge', 'Stable recovery'))}
+                  </div>
+                  <div style="font-size:11px; color:#2E4744; margin-top:6px; line-height:1.45;">
+                    <strong>Recommended Follow-up:</strong> {escape(discharge.get('follow_up', 'Surgical OPD review'))}
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            instructions = discharge.get("instructions", [])
+            if instructions:
+                st.markdown('<div class="timeline-label">POST-OPERATIVE RECOVERY INSTRUCTIONS</div>', unsafe_allow_html=True)
+                for inst in instructions:
+                    st.markdown(f"• <span style='font-size:11px; color:var(--ink);'>{escape(inst)}</span>", unsafe_allow_html=True)
+        else:
+            st.caption("No surgical procedure recorded for this patient.")
 
     with tab_meds:
+        st.markdown('<div class="timeline-label">ACTIVE MEDICATIONS & MEAL TIMINGS</div>', unsafe_allow_html=True)
         meds = p_snap.get("medications", [])
         if not meds:
             st.caption("No active medications prescribed.")
@@ -1283,46 +1457,60 @@ def patient_clinical_chart_dialog(patient_id: str) -> None:
                     unsafe_allow_html=True,
                 )
 
-    with tab_labs:
-        labs = p_snap.get("diagnostics", [])
-        if not labs:
-            st.caption("No diagnostic reports on record.")
-        else:
-            for lab in labs:
-                st.markdown(
-                    f"""
-                    <div style="background:white; border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:8px;">
-                      <div style="display:flex; justify-content:space-between;">
-                        <strong style="font-size:12px; color:var(--ink);">{escape(lab['name'])}</strong>
-                        <span class="status">{escape(lab.get('category', 'Lab'))}</span>
-                      </div>
-                      <div style="font-size:11px; color:#3F5D58; margin-top:4px;"><strong>Result:</strong> {escape(lab.get('result', lab.get('summary', '')))}</div>
-                      <div style="font-size:10px; color:var(--muted); margin-top:3px;">Reference: {escape(lab.get('reference_range', 'Normal'))} · Date: {escape(lab.get('date', ''))}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+    # Bottom Actions Bar
+    st.markdown("<div style='height:14px; border-top:1px solid #E0EAE8; margin-top:14px;'></div>", unsafe_allow_html=True)
 
-    with tab_surg:
-        discharge = p_snap.get("discharge", {})
-        if discharge and discharge.get("procedure"):
-            st.markdown(
-                f"""
-                <div style="background:white; border:1px solid var(--line); border-radius:10px; padding:10px;">
-                  <strong style="font-size:12px; color:var(--ink);">{escape(discharge.get('procedure', 'Surgical procedure'))}</strong>
-                  <div style="font-size:11px; color:var(--muted); margin-top:3px;">Date: {escape(discharge.get('discharge_date', ''))} · Lead Consultant: {escape(discharge.get('consultant', ''))}</div>
-                  <div style="font-size:11px; color:#2E4744; margin-top:6px; line-height:1.4;">{escape(discharge.get('condition_at_discharge', ''))}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        else:
-            st.caption("No surgical procedure recorded for this patient.")
+    target_appt = appointment_data
+    if not target_appt:
+        upcoming_list = [a for a in p_snap.get("appointments", []) if a.get("status") not in ("Completed", "Cancelled", "Doctor Unavailable (Reschedule Required)")]
+        if upcoming_list:
+            target_appt = upcoming_list[0]
 
-    st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
-    if st.button("＋ Schedule New Appointment for this Patient", type="primary", use_container_width=True):
-        st.session_state["_book_default_patient_id"] = patient_id
-        st.rerun()
+    if target_appt:
+        t_date = target_appt.get("date", "")
+        t_time = target_appt.get("time", "")
+        t_type = target_appt.get("type", "Appointment")
+        st.markdown(
+            f"""
+            <div style="background:#F2F8F7; border:1px solid #CBE2DD; border-radius:8px; padding:6px 12px; margin-bottom:10px; font-size:11px; color:#0B6E69;">
+              <strong>Active Appointment:</strong> {escape(t_date)} at {escape(t_time)} · {escape(t_type)}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    act_col1, act_col2 = st.columns(2, gap="medium")
+    with act_col1:
+        if st.button("＋ Book Follow-up Appointment", type="primary", use_container_width=True, key=f"chart_book_fu_{patient_id}"):
+            doctor_book_appointment_dialog(st.session_state.active_doctor_id, default_patient_id=patient_id)
+
+    with act_col2:
+        if target_appt:
+            if st.button(
+                "⛔ Cancel Appointment (Doctor Unavailable)",
+                type="secondary",
+                use_container_width=True,
+                key=f"chart_cancel_btn_{patient_id}_{target_appt.get('id')}",
+                help="Doctor is unavailable: cancels appointment and creates an escalation for the patient to rebook",
+            ):
+                with st.spinner("Cancelling appointment and dispatching escalation to patient..."):
+                    client = INTEGRATIONS.supabase_client()
+                    doc_s = fetch_doctor_snapshot(client, st.session_state.active_doctor_id)
+                    d_name = doc_s.get("doctor", {}).get("name", "Dr. Rhea Mehta")
+                    cancel_appointment_and_escalate_in_supabase(
+                        client=client,
+                        appointment_id=str(target_appt.get("id")),
+                        patient_id=patient_id,
+                        reason="Doctor unavailable for scheduled OPD slot",
+                        doctor_name=d_name,
+                    )
+                    st.session_state._doctor_data_id = None
+                    st.session_state._patient_data_id = None
+                    record_activity_update(f"Appointment for {p['name']} on {target_appt.get('date')} cancelled due to doctor unavailability. Rebooking escalation dispatched.")
+                    st.session_state["doctor_toast"] = (f"Appointment cancelled. An escalation notice was dispatched to {p['name']} to rebook!", "⚠️")
+                    st.rerun()
+        else:
+            st.button("⛔ Cancel Appointment", disabled=True, use_container_width=True, help="No active upcoming appointment to cancel for this patient")
 
 
 def render_patient_portal() -> None:
@@ -1852,36 +2040,23 @@ def render_doctor_portal() -> None:
         s_c3.metric("Blocked", f"{stats.get('blocked_count', len(unavailability))}")
 
         st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-        st.markdown('<div class="timeline-label">SCHEDULE CONTROLS</div>', unsafe_allow_html=True)
+        st.markdown('<div class="timeline-label">BLOCKED TIME & LEAVE</div>', unsafe_allow_html=True)
         if st.button("⛔ Mark Unavailability / Block Slot", key="doc_block_btn", type="primary", use_container_width=True):
             doctor_unavailability_dialog(doc_id, doc_name)
 
-        if st.button("＋ Schedule New Appointment", key="doc_add_appt_btn", use_container_width=True):
-            doctor_book_appointment_dialog(doc_id)
-
-        if st.button("↺ Reset Database & State", key="doc_reset_db_btn", use_container_width=True, help="Reset Supabase database back to baseline"):
-            with st.spinner("Restoring Supabase database to baseline..."):
-                reset_supabase_database(INTEGRATIONS.supabase_client())
-                st.session_state.clear()
-                st.toast("Database and session reset to baseline!", icon="✅")
-                st.rerun()
-
-        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-        st.markdown('<div class="timeline-label">BLOCKED TIME & LEAVE</div>', unsafe_allow_html=True)
         if not unavailability:
             st.caption("No schedule blocks active. All open OPD slots are available to patients.")
         else:
             for unavail in unavailability:
                 u_id = unavail["unavailability_id"]
                 u_date = unavail["blocked_date"]
-                u_type = unavail["block_type"]
                 u_slot = unavail.get("blocked_slot") or "All Day"
                 u_reason = unavail.get("reason", "Doctor unavailable")
                 col_u_info, col_u_del = st.columns([3.2, 1.2], gap="small")
                 with col_u_info:
                     st.markdown(
                         f"""
-                        <div style="background:white; border:1px solid #FFD8A8; border-radius:9px; padding:7px 9px; font-size:10px;">
+                        <div style="background:white; border:1px solid #FFD8A8; border-radius:9px; padding:7px 9px; font-size:10px; margin-top:6px;">
                           <strong style="color:#B25E00;">{escape(u_date)} · {escape(u_slot)}</strong>
                           <div style="color:var(--muted); font-size:9px; margin-top:2px;">{escape(u_reason)}</div>
                         </div>
@@ -1889,6 +2064,7 @@ def render_doctor_portal() -> None:
                         unsafe_allow_html=True,
                     )
                 with col_u_del:
+                    st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
                     if st.button("Unblock", key=f"unblock_btn_{u_id}", use_container_width=True):
                         record_activity_update("Doctor availability unblocked")
                         unblock_doctor_slot_in_supabase(client, u_id)
@@ -1898,50 +2074,48 @@ def render_doctor_portal() -> None:
 
     with doc_main:
         st.markdown('<span class="middle-panel-marker"></span>', unsafe_allow_html=True)
-        panel_header(
-            "Doctor Appointment Agenda",
-            f"Schedule Overview · {doc_name}",
-            "Click on any appointment to view the patient's full clinical chart, diagnostic labs, medications, and surgical notes.",
-        )
+        hdr_col, btn_col = st.columns([1.75, 1.15], gap="small")
+        with hdr_col:
+            panel_header(
+                "Doctor Appointment Agenda",
+                f"Schedule Overview · {doc_name}",
+                "Click on any appointment card to view patient clinical chart and actions.",
+            )
+        with btn_col:
+            st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
+            if st.button("＋ Schedule New Appointment", key="doc_add_appt_btn", type="primary", use_container_width=True):
+                doctor_book_appointment_dialog(doc_id)
 
         doc_tabs = st.tabs([
             f"Today (18 Oct) · {len(today_appts)}",
             f"This Week (18–24 Oct) · {len(week_appts)}",
-            f"All Scheduled & History · {len(all_appts)}",
         ])
 
-        agenda_groups = [
-            (doc_tabs[0], today_appts, "TODAY'S APPOINTMENTS (18 OCT 2026)", "today"),
-            (doc_tabs[1], week_appts, "WEEKLY APPOINTMENTS (18 – 24 OCT 2026)", "week"),
-            (doc_tabs[2], all_appts, "ALL APPOINTMENTS & PATIENT VISITS", "all"),
-        ]
+        # TAB 1: TODAY
+        with doc_tabs[0]:
+            st.markdown('<div class="timeline-label">TODAY\'S APPOINTMENTS (18 OCT 2026)</div>', unsafe_allow_html=True)
+            if not today_appts:
+                st.info("No appointments scheduled for today.")
+            else:
+                for idx, a in enumerate(today_appts):
+                    p_name = a.get("patient_name", "Patient")
+                    p_age = a.get("patient_age", "30")
+                    p_gender = a.get("patient_gender", "F")
+                    p_id = a.get("patient_id", "")
+                    p_phone = a.get("patient_phone", "")
+                    appt_date = a.get("date", "")
+                    appt_time = a.get("time", "")
+                    appt_type = a.get("type", "Consultation")
+                    appt_status = a.get("status", "Confirmed")
+                    appt_loc = a.get("location", "OPD Wing B")
+                    appt_sum = a.get("summary", "")
+                    rebook_notice = a.get("rebook_notice")
 
-        for tab_obj, appt_list, group_title, tab_prefix in agenda_groups:
-            with tab_obj:
-                st.markdown(f'<div class="timeline-label">{group_title}</div>', unsafe_allow_html=True)
-                if not appt_list:
-                    st.info("No appointments scheduled for this period.")
-                else:
-                    for idx, a in enumerate(appt_list):
-                        p_name = a.get("patient_name", "Patient")
-                        p_age = a.get("patient_age", "30")
-                        p_gender = a.get("patient_gender", "F")
-                        p_id = a.get("patient_id", "")
-                        p_phone = a.get("patient_phone", "")
-                        appt_date = a.get("date", "")
-                        appt_time = a.get("time", "")
-                        appt_type = a.get("type", "Consultation")
-                        appt_status = a.get("status", "Confirmed")
-                        appt_loc = a.get("location", "OPD Wing B")
-                        appt_sum = a.get("summary", "")
-                        rebook_notice = a.get("rebook_notice")
+                    status_badge_class = "status" if appt_status == "Confirmed" else ("status wait" if "Reschedule" in appt_status or "Unavailable" in appt_status else "status old")
+                    notice_html = f'<div class="rebook-notice">⚠️ <strong>Notice:</strong> {escape(rebook_notice)}</div>' if rebook_notice else ""
 
-                        status_badge_class = "status" if appt_status == "Confirmed" else ("status wait" if "Reschedule" in appt_status else "status old")
-
-                        notice_html = ""
-                        if rebook_notice:
-                            notice_html = f'<div class="rebook-notice">⚠️ <strong>Rescheduled Notice:</strong> {escape(rebook_notice)}</div>'
-
+                    with st.container():
+                        st.markdown('<div class="agenda-card-wrapper">', unsafe_allow_html=True)
                         st.markdown(
                             f"""
                             <div class="agenda-card">
@@ -1963,19 +2137,89 @@ def render_doctor_portal() -> None:
                                 {escape(appt_sum)}
                               </div>
                               {notice_html}
+                              <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px; padding-top:6px; border-top:1px dashed #E2ECE9; font-size:10px; color:#0B6E69; font-weight:600;">
+                                <span>🩺 Patient Clinical Chart & Actions</span>
+                                <span>↗ Click card to view details</span>
+                              </div>
                             </div>
                             """,
                             unsafe_allow_html=True,
                         )
+                        if st.button("Open Chart", key=f"card_today_{idx}_{a['id']}", use_container_width=True):
+                            patient_clinical_chart_dialog(p_id, appointment_data=a)
 
-                        col_action1, col_action2, _ = st.columns([1.5, 1.5, 2.5], gap="small")
-                        with col_action1:
-                            if st.button("🩺 View Patient Chart", key=f"view_chart_{tab_prefix}_{idx}_{a['id']}", use_container_width=True):
-                                patient_clinical_chart_dialog(p_id)
-                        with col_action2:
-                            if st.button("＋ Book Follow-up", key=f"book_fu_{tab_prefix}_{idx}_{a['id']}", use_container_width=True):
-                                doctor_book_appointment_dialog(doc_id, default_patient_id=p_id)
-                        st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
+        # TAB 2: THIS WEEK (Clubbed by day/date of the week)
+        with doc_tabs[1]:
+            st.markdown('<div class="timeline-label">WEEKLY APPOINTMENTS BY DAY (18 – 24 OCT 2026)</div>', unsafe_allow_html=True)
+            if not week_appts:
+                st.info("No appointments scheduled for this week.")
+            else:
+                from collections import defaultdict
+                grouped_by_day = defaultdict(list)
+                for a in week_appts:
+                    day_key = a.get("date") or "Scheduled OPD"
+                    grouped_by_day[day_key].append(a)
+
+                for day_label, day_appts in grouped_by_day.items():
+                    st.markdown(
+                        f"""
+                        <div class="agenda-day-header">
+                          <span>📅 {escape(day_label)}</span>
+                          <span class="micro-pill" style="font-weight:700;">{len(day_appts)} appointment(s)</span>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    for idx, a in enumerate(day_appts):
+                        p_name = a.get("patient_name", "Patient")
+                        p_age = a.get("patient_age", "30")
+                        p_gender = a.get("patient_gender", "F")
+                        p_id = a.get("patient_id", "")
+                        p_phone = a.get("patient_phone", "")
+                        appt_date = a.get("date", "")
+                        appt_time = a.get("time", "")
+                        appt_type = a.get("type", "Consultation")
+                        appt_status = a.get("status", "Confirmed")
+                        appt_loc = a.get("location", "OPD Wing B")
+                        appt_sum = a.get("summary", "")
+                        rebook_notice = a.get("rebook_notice")
+
+                        status_badge_class = "status" if appt_status == "Confirmed" else ("status wait" if "Reschedule" in appt_status or "Unavailable" in appt_status else "status old")
+                        notice_html = f'<div class="rebook-notice">⚠️ <strong>Notice:</strong> {escape(rebook_notice)}</div>' if rebook_notice else ""
+
+                        with st.container():
+                            st.markdown('<div class="agenda-card-wrapper">', unsafe_allow_html=True)
+                            st.markdown(
+                                f"""
+                                <div class="agenda-card">
+                                  <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                                    <div style="display:flex; align-items:center; gap:8px;">
+                                      <span class="agenda-time">{escape(appt_time)}</span>
+                                      <strong style="font-size:13px; color:var(--ink);">{escape(p_name)}</strong>
+                                      <span style="font-size:10px; color:var(--muted);">({escape(p_gender)}, {p_age}y) · ID: {escape(p_id[-4:] if p_id else '')}</span>
+                                    </div>
+                                    <div style="display:flex; gap:6px; align-items:center;">
+                                      <span class="micro-pill" style="font-weight:700;">{escape(appt_type)}</span>
+                                      <span class="{status_badge_class}">{escape(appt_status)}</span>
+                                    </div>
+                                  </div>
+                                  <div style="margin-top:6px; font-size:11px; color:#425B58; line-height:1.4;">
+                                    <strong>Date:</strong> {escape(appt_date)} · <strong>Location:</strong> {escape(appt_loc)} · <strong>Phone:</strong> {escape(p_phone)}
+                                  </div>
+                                  <div style="margin-top:5px; font-size:11px; color:var(--ink); line-height:1.4;">
+                                    {escape(appt_sum)}
+                                  </div>
+                                  {notice_html}
+                                  <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px; padding-top:6px; border-top:1px dashed #E2ECE9; font-size:10px; color:#0B6E69; font-weight:600;">
+                                    <span>🩺 Patient Clinical Chart & Actions</span>
+                                    <span>↗ Click card to view details</span>
+                                  </div>
+                                </div>
+                                """,
+                                unsafe_allow_html=True,
+                            )
+                            if st.button("Open Chart", key=f"card_week_{day_label}_{idx}_{a['id']}", use_container_width=True):
+                                patient_clinical_chart_dialog(p_id, appointment_data=a)
 
     with doc_right:
         st.markdown('<span class="right-panel-marker"></span>', unsafe_allow_html=True)
@@ -1994,10 +2238,10 @@ def render_doctor_portal() -> None:
                     )
 
         with st.container(key="doctor_chat_dock"):
-            col_up, col_smpl = st.columns([1, 1], gap="small")
-            with col_up:
-                with st.popover("📤 Upload Note (PDF)", use_container_width=True):
-                    st.caption("Upload consultation or prescription PDF:")
+            upload_col, form_col = st.columns([0.18, 1.18], gap="small")
+            with upload_col:
+                with st.popover("", icon=":material/upload_file:", use_container_width=True, help="Upload Consultation Note (PDF) or Ingest Sample"):
+                    st.markdown("**Upload Consultation Note (PDF)**")
                     uploaded_pdf = st.file_uploader(
                         "Consultation PDF",
                         type=["pdf"],
@@ -2012,33 +2256,34 @@ def render_doctor_portal() -> None:
                                     file_name=uploaded_pdf.name,
                                 )
                                 st.rerun()
-            with col_smpl:
-                if st.button("📑 Ingest Sample Note", key="btn_ingest_sample_note", use_container_width=True, help="Load and auto-sync Dr. Rhea Mehta's Day 8 consultation note for Ananya Iyer"):
-                    with st.spinner("Extracting text and syncing consultation to Supabase..."):
-                        sample_bytes = generate_sample_consultation_pdf()
-                        handle_consultation_pdf_ingestion(
-                            sample_bytes,
-                            file_name="Dr_Rhea_Mehta_Consultation_18Oct2026.pdf",
-                        )
-                        st.rerun()
+                    st.divider()
+                    if st.button("📑 Ingest Sample Note (Day 8)", key="btn_ingest_sample_note", use_container_width=True, help="Load and auto-sync Dr. Rhea Mehta's Day 8 consultation note for Ananya Iyer"):
+                        with st.spinner("Extracting text and syncing consultation to Supabase..."):
+                            sample_bytes = generate_sample_consultation_pdf()
+                            handle_consultation_pdf_ingestion(
+                                sample_bytes,
+                                file_name="Dr_Rhea_Mehta_Consultation_18Oct2026.pdf",
+                            )
+                            st.rerun()
 
-            with st.form("doctor_chat_form", clear_on_submit=True):
-                prompt_col, send_col = st.columns([1, 0.18], gap="small")
-                with prompt_col:
-                    doc_prompt = st.text_input(
-                        "Message",
-                        placeholder="Ask clinical question or paste consultation note…",
-                        label_visibility="collapsed",
-                    )
-                with send_col:
-                    doc_submitted = st.form_submit_button(
-                        "",
-                        key="doc_send_submit",
-                        icon=":material/send:",
-                        type="primary",
-                        use_container_width=True,
-                        help="Send message or consultation note",
-                    )
+            with form_col:
+                with st.form("doctor_chat_form", clear_on_submit=True):
+                    prompt_col, send_col = st.columns([1, 0.18], gap="small")
+                    with prompt_col:
+                        doc_prompt = st.text_input(
+                            "Message",
+                            placeholder="Ask clinical question or paste consultation note…",
+                            label_visibility="collapsed",
+                        )
+                    with send_col:
+                        doc_submitted = st.form_submit_button(
+                            "",
+                            key="doc_send_submit",
+                            icon=":material/send:",
+                            type="primary",
+                            use_container_width=True,
+                            help="Send message or consultation note",
+                        )
 
             if doc_submitted and doc_prompt.strip():
                 add_doctor_chat_message(doc_prompt.strip(), doc_snap)
@@ -2064,7 +2309,6 @@ def render_doctor_portal() -> None:
             )
 
 
-
 # -----------------------------------------------------------------------------
 # Top Navigation Bar & Portal Dispatch
 # -----------------------------------------------------------------------------
@@ -2072,7 +2316,7 @@ if st.session_state.get("doctor_toast"):
     msg, ic = st.session_state.pop("doctor_toast")
     st.toast(msg, icon=ic)
 
-top_bar_col1, top_bar_col2, top_bar_col3 = st.columns([1.1, 1.3, 1.1], gap="medium")
+top_bar_col1, top_bar_col2, top_bar_col_reset, top_bar_col3 = st.columns([1.1, 1.15, 0.75, 1.1], gap="small")
 
 with top_bar_col1:
     st.markdown(
@@ -2103,6 +2347,15 @@ with top_bar_col2:
     if new_mode != st.session_state.portal_mode:
         st.session_state.portal_mode = new_mode
         st.rerun()
+
+with top_bar_col_reset:
+    st.markdown("<div style='height:2px;'></div>", unsafe_allow_html=True)
+    if st.button("↺ Reset DB", key="top_reset_db_btn", use_container_width=True, help="Reset Supabase database & state back to baseline"):
+        with st.spinner("Restoring Supabase database to baseline..."):
+            reset_supabase_database(INTEGRATIONS.supabase_client())
+            st.session_state.clear()
+            st.toast("Database and session reset to baseline!", icon="✅")
+            st.rerun()
 
 with top_bar_col3:
     if st.session_state.portal_mode == "patient":

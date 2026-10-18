@@ -611,6 +611,37 @@ def update_appointment_in_supabase(
     client.table("appointments").update(payload).eq("appointment_id", appointment_id).execute()
 
 
+def cancel_appointment_and_escalate_in_supabase(
+    client: Client,
+    appointment_id: str,
+    patient_id: str,
+    reason: str = "Doctor unavailable",
+    doctor_name: str = "Dr. Rhea Mehta",
+) -> dict[str, Any]:
+    """Cancel an appointment due to doctor unavailability and dispatch an escalation for patient rebooking."""
+    try:
+        client.table("appointments").update({
+            "status": "Doctor Unavailable (Reschedule Required)",
+            "appointment_summary": f"Cancelled: {reason}. Priority escalation dispatched for patient rebooking.",
+        }).eq("appointment_id", appointment_id).execute()
+    except Exception:
+        pass
+
+    ticket_payload = {
+        "patient_id": patient_id,
+        "category": "Doctor Unavailable",
+        "priority": "High",
+        "status": "Open",
+        "ai_detected_reason": f"{doctor_name} is unavailable ({reason}). Escalation dispatched for patient priority rebooking.",
+        "assigned_staff_role": "Duty Clinical Coordinator",
+    }
+    try:
+        res = client.table("escalation_agent_data").insert(ticket_payload).execute()
+        return res.data[0] if (res and res.data) else ticket_payload
+    except Exception:
+        return ticket_payload
+
+
 def toggle_prescription_taken_in_supabase(
     client: Client,
     prescription_item_id: str,
