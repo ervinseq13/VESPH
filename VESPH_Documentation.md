@@ -14,100 +14,207 @@
 
 ---
 
-## 1. System Architecture & Dual-Portal Topology
+## 1. Master System Architecture & Symmetric Multi-Agent Flow
 
-VESPH Care unifies patient recovery and physician practice workflows around a single live database source of truth:
+The diagram below presents the comprehensive, highly detailed architecture flow uniting the **Doctor Practice Portal** and the **Patient Care Portal** through specialized agents, interactive verification gates, the live Supabase PostgreSQL relational database layer, and real-time cross-portal reactive synchronization:
 
 ```mermaid
-flowchart TB
-    subgraph ClientTier["Client Tier · Streamlit Reactive UI (app.py)"]
-        Nav["Persistent Role Switcher<br/>(👤 Patient View · 🩺 Doctor View)"]
-        PV["👤 Patient Portal<br/>• Longitudinal Timeline<br/>• Mealtime Meds (Breakfast/Lunch/Dinner)<br/>• Appointments & Diagnostics<br/>• Interactive Care Assistant"]
-        DV["🩺 Doctor Portal<br/>• Multi-Week Agenda (Dr. Rhea Mehta)<br/>• Unavailability / Leave Blocking<br/>• Patient Clinical Charts Modal<br/>• RAG Consultation Note Ingestion"]
-        Nav --> PV
-        Nav --> DV
+graph TD
+    %% CLIENT ENTRY POINTS & ROLE ROUTING
+    InboundInteraction([Inbound User Interaction · Doctor or Patient]) --> PortalRouting{Portal Role Routing}
+
+    %% =========================================================================
+    %% 🩺 DOCTOR PRACTICE PORTAL FLOWS (Dr. Rhea Mehta)
+    %% =========================================================================
+    subgraph DoctorPortal["🩺 Doctor Portal Multi-Agent Ecosystem (Dr. Rhea Mehta)"]
+        PortalRouting -->|Doctor Persona| DocUI[Doctor Portal Client UI<br/>• OPD Clinic Agenda with Day/Week Tabs<br/>• Doctor Clinical Assistant Chat<br/>• Consultation PDF/Text Uploader<br/>• Patient Clinical Chart Modal]
+        
+        DocUI --> DocOrch[Doctor Orchestrator · doctor_orchestrator.py]
+        DocOrch --> DocClassifier{Intent Classifier & Entity Parser<br/>Regex & Groq NLP}
+
+        %% Flow 1: Schedule & Appointment Count Flow
+        DocClassifier -->|CHECK_SCHEDULE<br/>e.g., 'what is my schedule on 22nd'| DocSchedAgent[Doctor Schedule & Count Agent]
+        DocSchedAgent --> DateParser[Safe Word-Boundary Date Parser<br/>regex: \b(2[0-9]|3[01]|1[0-9]|[1-9])(st|nd|rd|th)?\b<br/>Defaults to viewed week's month]
+        DateParser --> SchedQuery[(Query appointments Table<br/>Filter by doctor_id & parsed date)]
+        SchedQuery --> SchedFormat[Format Structured OPD Table<br/>Exact appointment count, patient names, short IDs,<br/>timeslot intervals, and status badges]
+
+        %% Flow 2: Doctor Unavailability & Conflict Rebooking Flow
+        DocClassifier -->|BLOCK_UNAVAILABILITY<br/>e.g., 'I am not available on 22nd'| DocAvailAgent[Doctor Availability & Rebooking Agent]
+        DocAvailAgent --> ConflictDetector[(Detect Conflicting Appointments<br/>in appointments Table for target date)]
+        ConflictDetector --> AvailProposal[Generate Verification Proposal<br/>Lists affected patients & computed fallback slots<br/>e.g., 26, 27, 28 Oct · Avoids blocked date!]
+        AvailProposal --> DocAvailGate{Doctor Confirms?<br/>'yes' / 'confirm'}
+        DocAvailGate -->|Rejects / Cancels| AvailCancel[Cancel Proposal & Retain Status]
+        DocAvailGate -->|Doctor Confirms| ExecAvailCommit[(Execute Transaction in Supabase:<br/>1. INSERT doctor_unavailability<br/>2. UPDATE appointments SET appointment_datetime=fallback,<br/>   status='Pending'<br/>3. INSERT escalation_agent_data priority notice)]
+        ExecAvailCommit --> AvailReceipt[Format Unavailability Receipt<br/>'Verified in Supabase · Patients notified of reschedule']
+
+        %% Flow 3: Patient Record & Clinical Facet Lookup Flow
+        DocClassifier -->|PATIENT_QUERY<br/>e.g., 'Tell me about Neha Kapoor' / 'what meds is Ananya taking'| DocPatientAgent[Patient Verification & Facet Agent]
+        DocPatientAgent --> FuzzyRoster{Fuzzy Match in patients Table?<br/>Full Name / First / Last Name}
+        FuzzyRoster -->|Not Found| RosterSample[Clarify with 5-Patient Roster Sample<br/>Show Names & Short IDs PID-XXXX]
+        FuzzyRoster -->|Verified Patient: PID-8421| FacetBranch{Detect Inquired Clinical Facet}
+        FacetBranch -->|Medications / Rx| FacetMedQuery[(Query prescription_details + medicines<br/>Deduplicate dosage & brand e.g. 'Dolo 650 mg')]
+        FacetBranch -->|Appointments / Schedule| FacetApptQuery[(Query appointments Table<br/>Upcoming & past visits with short IDs APT-XXXX)]
+        FacetBranch -->|Clinical Summary / General| FacetSumQuery[(Fetch longitudinal patient_summary<br/>Surgical history, vitals & demographics)]
+        FacetMedQuery --> FormatChart[Format Rich Clinical Profile Card<br/>with Demographics, short IDs, active meds, and visits]
+        FacetApptQuery --> FormatChart
+        FacetSumQuery --> FormatChart
+
+        %% Flow 4: RAG Consultation Document Ingestion Pipeline Flow
+        DocClassifier -->|CLINICAL_NOTE<br/>Upload PDF or Paste Raw Consultation Note| DocIngestAgent[Clinical Document Ingestion Agent]
+        DocIngestAgent --> InputTypeCheck{Input is PDF?}
+        InputTypeCheck -->|Yes| PDFExtract[extract_text_from_pdf via pypdf<br/>Iterate page text streams]
+        InputTypeCheck -->|No: Text| RawNoteText[Direct Text Stream]
+        PDFExtract --> GroqNLP[Groq Clinical NLP Extraction<br/>Model: openai/gpt-oss-20b · Strict JSON Schema<br/>Extract: Diagnosis, Vitals, Mealtime Meds, Follow-up]
+        RawNoteText --> GroqNLP
+        GroqNLP --> IngestPreviewGate[Clinical Verification Preview Gate<br/>Display extracted entities with checkmarks<br/>Prompt: 'Confirm to update Supabase records?']
+        IngestPreviewGate --> DocIngestConfirm{Doctor Confirms?<br/>'yes' / 'confirm'}
+        DocIngestConfirm -->|Rejects| IngestAbort[Clear pending state & discard staging]
+        DocIngestConfirm -->|Doctor Confirms| MultiTableCommit[(Transactional Commit across 5 Supabase Tables:<br/>1. UPDATE patients.patient_summary<br/>2. INSERT consultations CON-1001<br/>3. INSERT appointments APT-1001, status='Confirmed'<br/>4. INSERT prescription_details MED-6661<br/>5. INSERT diagnostics & diagnostics_results LAB-1001)]
+        MultiTableCommit --> IngestReceipt[Format Ingestion Receipt<br/>Displays verified short IDs & prompts inspection in Patient View]
+
+        %% Flow 5: Doctor Chit-Chat Deflection Flow
+        DocClassifier -->|CHIT_CHAT / Off-Topic<br/>e.g., 'hello', 'what is the weather'| DocChitChat[Doctor Chit-Chat Deflection Agent]
+        DocChitChat --> DocScopeHelp[Clarify Practice Management Capabilities<br/>Schedule checks, leave blocking, patient records, note ingestion]
     end
 
-    subgraph ServiceTier["Orchestration & Agent Service Tier"]
-        PO["Patient Orchestrator (LangGraph StateGraph)<br/>• Safety Escalation Agent<br/>• Reminder & Scheduling Agent<br/>• Patient Health Summary Agent<br/>• Natural Intake Parser ('I took dolo')"]
-        DO["Doctor Orchestrator (doctor_orchestrator.py)<br/>• Schedule & Agenda Agent<br/>• Leave & Escalation Agent<br/>• Patient Clinical Records Agent<br/>• Chit-Chat & Capability Agent"]
-        RAG["RAG Ingestion Engine (consultation_ingestion.py)<br/>• pypdf Text Extractor<br/>• Groq Clinical NLP Entity Parser<br/>• Transactional DB Committer"]
-        Hub["Integration Hub (integrations.py)<br/>• Scoped System Prompts<br/>• Connection Readiness Probes"]
+    %% =========================================================================
+    %% 👤 PATIENT CARE PORTAL FLOWS (Ananya Iyer)
+    %% =========================================================================
+    subgraph PatientPortal["👤 Patient Portal Multi-Agent Ecosystem (Ananya Iyer)"]
+        PortalRouting -->|Patient Persona| PatUI[Patient Portal Client UI<br/>• Recovery Timeline & Surgical Milestones<br/>• Mealtime Medication Cards Breakfast/Lunch/Dinner<br/>• Diagnostic Download Center & Histopathology<br/>• Patient Care Assistant Chat<br/>• 15m Cadence Reschedule Modal]
         
-        PV <--> PO
-        PO <--> Hub
-        DV <--> DO
-        DV <--> RAG
-        DO <--> Hub
-        RAG <--> Hub
+        PatUI --> PatOrch[Patient Orchestrator<br/>orchestrator/patient_orchestrator.py · LangGraph StateGraph]
+        PatOrch --> PatClassifier{Intent & Safety Classifier<br/>Red-Flag Keyword & NLP Router}
+
+        %% Flow 6: Deterministic Safety & Emergency Escalation Flow
+        PatClassifier -->|Emergency / Wrong Report / Acute Symptoms<br/>e.g., 'severe chest pain', 'wrong blood report'| PatEscalationAgent[Safety & Escalation Agent]
+        PatEscalationAgent --> EmergencyGuide[Immediate Deterministic Safety Advice<br/>'Call +91 22 4000 1122 or nearest emergency room']
+        EmergencyGuide --> CreateEscalationTicket[(Insert escalation_agent_data<br/>status='Open', priority='Critical', escalated_at=NOW)]
+        CreateEscalationTicket --> PromptResolutionActions[Display Interactive Action Buttons<br/>'Request report reissue' / 'Contact Clinical Coordinator']
+        PromptResolutionActions --> PatResolutionChoice{Patient Clicks Action}
+        PatResolutionChoice --> UpdateEscalationTicket[(UPDATE escalation_agent_data<br/>status='Resolved', resolved_at=NOW)]
+
+        %% Flow 7: Natural Language Medication Intake Flow
+        PatClassifier -->|Natural Intake Confirmation<br/>e.g., 'I took dolo' / 'took my pantocid'| PatIntakeParser[Natural Intake Handler]
+        PatIntakeParser --> MatchActiveRx{Match Active Prescription in DB?<br/>Resolve Brand Name / Medicine ID}
+        MatchActiveRx -->|Matched: Dolo 650 mg| ToggleMedDB[(Call toggle_prescription_taken_in_supabase<br/>UPDATE prescription_details SET is_taken=TRUE<br/>WHERE prescription_item_id = :id)]
+        ToggleMedDB --> ReEvalNotif{Are all meal medications taken?}
+        ReEvalNotif -->|All Taken| DismissMealCard[Dismiss Medication Check Alert Card<br/>from Notification Centre]
+        ReEvalNotif -->|Pending Doses Remain| KeepRemainingCard[Retain Alert Card for Remaining Doses]
+        DismissMealCard --> ConfirmIntakeReply[Post Warm Conversational Confirmation<br/>'Great job! Marked Dolo 650 mg taken in hospital records']
+        KeepRemainingCard --> ConfirmIntakeReply
+
+        %% Flow 8: Proactive Reminders & Reschedule Convergence Flow
+        PatClassifier -->|Upcoming Visits / Dosing / Fasting<br/>e.g., 'when is my appointment', 'fasting rules'| PatReminderAgent[Reminder & Scheduling Agent]
+        PatReminderAgent --> CheckApptStatus{Check Appointment Status in DB}
+        CheckApptStatus -->|status == 'Pending' or 'Rescheduled'<br/>e.g. Doctor moved visit| RescheduleAlert[Render Action Required Banner<br/>'⚠️ Doctor schedule adjusted to 26 Oct. Confirm or rebook']
+        RescheduleAlert --> PatReschedAction{Patient Chooses Action}
+        PatReschedAction -->|Clicks 'Confirm'| ConfirmSlot[(UPDATE appointments SET status='Confirmed')]
+        PatReschedAction -->|Clicks 'Reschedule'| OpenSlotPicker[Display 15m Cadence Slots<br/>Select alternative date & time with 5m buffers]
+        OpenSlotPicker --> SaveNewSlot[(UPDATE appointments SET appointment_datetime=new_dt,<br/>status='Pending')]
+        CheckApptStatus -->|status == 'Confirmed'| NormalReminder[Standard 1-Day Advance Reminder<br/>Preparation instructions & room location]
+        NormalReminder --> FastingCheck{Diagnostic Test Requires Fasting?}
+        FastingCheck -->|Yes: Lipid / Sugar| FastingAdvice[Deliver Fasting Protocol: 10-12 hr overnight fast]
+        FastingCheck -->|No| RoutinePrep[Routine Clinic Arrival Instructions]
+
+        %% Flow 9: Longitudinal Summary & Adherence Trends Flow
+        PatClassifier -->|Summary / Biomarkers / Adherence<br/>e.g., 'how is my recovery', 'adherence'| PatSummaryAgent[Summary & Trends Agent]
+        PatSummaryAgent --> QueryBiomarkers[(Query consultations + diagnostics_results)]
+        QueryBiomarkers --> CalcAdherence[Calculate Prescribed vs Taken Ratio<br/>e.g., '1 of 3 taken · 33% adherence']
+        CalcAdherence --> FormatRecoveryTrend[Format Clinical Recovery Summary<br/>WBC trend, surgical clearance, diet stage]
+
+        %% Flow 10: Doctor Profile Lookup Flow
+        PatClassifier -->|Doctor Inquiry<br/>e.g., 'Tell me about Dr. Rhea Mehta'| PatDocSummaryAgent[Doctor Profile Agent]
+        PatDocSummaryAgent --> QueryDoctorProfile[(Query doctors Table<br/>Name, qualifications, department, room)]
+        QueryDoctorProfile --> FormatDocProfile[Format Attending Physician Credentials Card]
+
+        %% Flow 11: Scoped LLM Chit-Chat Fallback Flow
+        PatClassifier -->|General Question / Off-Topic| GroqPatientFallback[Groq LLM Scoped Fallback]
+        GroqPatientFallback --> ScopedPrompt[PATIENT_SYSTEM_PROMPT<br/>Hospital-Scoped Recovery · Refuse General Life Advice]
     end
 
-    subgraph DataTier["Data & Intelligence Storage Tier"]
-        Groq["Groq Cloud Inference (LPU)<br/>Model: openai/gpt-oss-20b<br/>• Patient Persona: Empathetic, Plain-Language<br/>• Doctor Persona: Clinical-Grade, Concise"]
-        Supa["Supabase Cloud PostgreSQL (10 Tables)<br/>• patients · doctors · appointments<br/>• consultations · medicines · prescription_details<br/>• diagnostics · diagnostics_results<br/>• doctor_unavailability · escalation_agent_data"]
-        
-        Hub <--> Groq
-        Hub <--> Supa
-        RAG <--> Groq
-        RAG <--> Supa
+    %% =========================================================================
+    %% 🗄️ LIVE SUPABASE POSTGRESQL PERSISTENCE LAYER (10 Tables)
+    %% =========================================================================
+    subgraph DataPersistence["🗄️ Live Supabase Cloud PostgreSQL Data Layer (10 Relational Tables)"]
+        T_Patients[(patients<br/>Demographics, Longitudinal Summary, Short ID PID-XXXX)]
+        T_Doctors[(doctors<br/>Attending Physician Profiles, Room, Short ID DOC-XXXX)]
+        T_Appointments[(appointments<br/>Strict appointment_status_enum: Confirmed, Pending, Rescheduled, Cancelled, Completed)]
+        T_Unavailability[(doctor_unavailability<br/>Blocked Dates, Leave Records)]
+        T_Consultations[(consultations<br/>Encounter Vitals, Diagnoses, Short ID CON-XXXX)]
+        T_Medicines[(medicines<br/>Pharmaceutical Catalog)]
+        T_Prescriptions[(prescription_details<br/>Meal Timings: breakfast/lunch/dinner, is_taken status)]
+        T_Diagnostics[(diagnostics<br/>Laboratory Orders, Short ID LAB-XXXX)]
+        T_DiagResults[(diagnostics_results<br/>Biomarker Readings, WBC, Reference Ranges)]
+        T_Escalations[(escalation_agent_data<br/>Emergency Tickets, Priority Alerts, Resolution Records)]
     end
+
+    %% DATABASE BINDINGS: DOCTOR
+    SchedQuery -.-> T_Appointments
+    ConflictDetector -.-> T_Appointments
+    ExecAvailCommit -.-> T_Unavailability
+    ExecAvailCommit -.-> T_Appointments
+    ExecAvailCommit -.-> T_Escalations
+    FuzzyRoster -.-> T_Patients
+    FacetMedQuery -.-> T_Prescriptions
+    FacetMedQuery -.-> T_Medicines
+    FacetApptQuery -.-> T_Appointments
+    FacetSumQuery -.-> T_Patients
+    MultiTableCommit -.-> T_Patients
+    MultiTableCommit -.-> T_Consultations
+    MultiTableCommit -.-> T_Appointments
+    MultiTableCommit -.-> T_Prescriptions
+    MultiTableCommit -.-> T_Diagnostics
+    MultiTableCommit -.-> T_DiagResults
+
+    %% DATABASE BINDINGS: PATIENT
+    CreateEscalationTicket -.-> T_Escalations
+    UpdateEscalationTicket -.-> T_Escalations
+    ToggleMedDB -.-> T_Prescriptions
+    CheckApptStatus -.-> T_Appointments
+    ConfirmSlot -.-> T_Appointments
+    SaveNewSlot -.-> T_Appointments
+    QueryBiomarkers -.-> T_Consultations
+    QueryBiomarkers -.-> T_DiagResults
+    QueryDoctorProfile -.-> T_Doctors
+
+    %% UI OUTPUT BINDINGS
+    SchedFormat --> DocUI
+    AvailReceipt --> DocUI
+    AvailCancel --> DocUI
+    FormatChart --> DocUI
+    RosterSample --> DocUI
+    IngestReceipt --> DocUI
+    IngestAbort --> DocUI
+    DocScopeHelp --> DocUI
+
+    EmergencyGuide --> PatUI
+    UpdateEscalationTicket --> PatUI
+    ConfirmIntakeReply --> PatUI
+    ConfirmSlot --> PatUI
+    SaveNewSlot --> PatUI
+    FastingAdvice --> PatUI
+    RoutinePrep --> PatUI
+    FormatRecoveryTrend --> PatUI
+    FormatDocProfile --> PatUI
+    ScopedPrompt --> PatUI
+
+    %% =========================================================================
+    %% 🔄 BIDIRECTIONAL CROSS-PORTAL REACTIVE SYNCHRONIZATION
+    %% =========================================================================
+    ExecAvailCommit ==>|1. Doctor Blocks Date & Shifts Slot| RescheduleAlert
+    MultiTableCommit ==>|2. Doctor Ingests Note: Updates Meds/Appts/Labs| PatUI
+    ToggleMedDB ==>|3. Patient Takes Med: Live Checkoff Sync| FacetMedQuery
+    SaveNewSlot ==>|4. Patient Reschedules Slot| DocUI
 ```
 
 ---
 
-## 2. Multi-Agent Conversational Routing Architecture
+## 2. Detailed Flowcharts for Key Operational Flows
 
-VESPH Care deploys separate, specialized multi-agent graphs for the Patient and Doctor portals, guaranteeing deterministic safety and preventing cross-domain hallucinations.
+### Flow A: Doctor Unavailability & Automated Patient Conflict Rebooking
 
-```mermaid
-stateDiagram-v2
-    [*] --> InboundMessage
-
-    state "Role Detection" as RoleGate {
-        InboundMessage --> PatientRouter : Persona == Patient
-        InboundMessage --> DoctorRouter : Persona == Doctor
-    }
-
-    state "Patient Multi-Agent Graph (LangGraph)" as P_Graph {
-        PatientRouter --> EscalationAgent : Emergency (Chest Pain, Breathlessness)<br/>or Wrong Report Flag
-        PatientRouter --> ReminderAgent : Appointment Time, Next Med Dose,<br/>or Diagnostic Date Inquiry
-        PatientRouter --> SummaryAgent : Medical Diagnosis, Biomarkers,<br/>or Lab Value Interpretation
-        PatientRouter --> MedicationIntake : 'I took dolo' / 'taken meds'
-        PatientRouter --> GroqPatientFallback : General Hospital Record Query
-
-        EscalationAgent --> HumanActionTicket : Dispatch Priority Ticket
-        HumanActionTicket --> PatientResponse
-        ReminderAgent --> PatientResponse
-        SummaryAgent --> PatientResponse
-        MedicationIntake --> PatientResponse : Sync DB & Dismiss Notification
-        GroqPatientFallback --> PatientResponse
-    }
-
-    state "Doctor Clinical Assistant Graph" as D_Graph {
-        DoctorRouter --> ConfirmAction : Pending Action in Session ('yes' / 'confirm')
-        DoctorRouter --> ClinicalNoteIngest : Raw Consultation Text / Ingestion Request
-        DoctorRouter --> UnavailabilityBlock : Leave / Off Day / Block Schedule
-        DoctorRouter --> PatientQuery : 'Tell me about Ananya' / 'what meds is Neha taking'
-        DoctorRouter --> ScheduleCheck : 'what is my schedule on 22nd' / Appointment Count
-        DoctorRouter --> DoctorChitChat : Greeting / Off-Topic / Capabilities
-
-        ConfirmAction --> DoctorResponse : Execute Block or Commit Ingestion
-        ClinicalNoteIngest --> DoctorResponse : Generate Extraction Preview
-        UnavailabilityBlock --> DoctorResponse : Propose Rebooking Plan
-        PatientQuery --> DoctorResponse : Fetch Roster & Clinical Chart
-        ScheduleCheck --> DoctorResponse : Format Markdown OPD Table
-        DoctorChitChat --> DoctorResponse : Explain Clinical Capabilities
-    }
-
-    PatientResponse --> [*]
-    DoctorResponse --> [*]
-```
-
----
-
-## 3. Doctor Unavailability & Automated Conflict Rebooking Flowchart
-
-When an attending physician blocks leave or an emergency surgery occurs, VESPH Care automatically evaluates conflicting appointments, calculates open fallback slots, updates database statuses, and dispatches patient escalations.
+When an attending surgeon marks a day or timeslot unavailable, conflicting patient appointments are detected, moved to distinct future slots, and set to **`Pending`** status:
 
 ```mermaid
 sequenceDiagram
@@ -150,7 +257,216 @@ sequenceDiagram
 
 ---
 
-## 4. Appointment State Transition Machine & PostgreSQL Enum Hardening
+### Flow B: Doctor Patient Clinical Facet Lookup ("Tell me about Neha Kapoor")
+
+```mermaid
+flowchart TD
+    Query["Doctor Query<br/>'Tell me about Neha Kapoor' / 'what medication is Ananya taking?'"] --> Match{Roster Fuzzy Name Search<br/>Check all_patients for full/first/last name}
+    
+    Match -- No match found --> RosterSample["Format Sample Roster List<br/>Show 5 registered patients with short IDs (PID-XXXX)<br/>Ask physician to specify patient name or ID"]
+    
+    Match -- Matched: Ananya Iyer (PID-8421) --> FacetCheck{Detect Inquired Facets in Query}
+    
+    FacetCheck -- 'medication' / 'drugs' / 'rx' --> MedBranch["Query prescription_details + medicines<br/>SELECT brand_name, dosage, is_taken, meal_timing<br/>Deduplicate trailing numbers: 'Dolo 650 mg'"]
+    
+    FacetCheck -- 'appointment' / 'visit' / 'schedule' --> ApptBranch["Query appointments Table<br/>Filter by patient_id<br/>Format date, time, type, status"]
+    
+    FacetCheck -- Unspecified / General Summary --> GeneralBranch["Fetch longitudinal patient_summary<br/>Combine Demographics + Vitals + Summary"]
+    
+    MedBranch --> Assemble["Assemble Clinical Response<br/>Header: Patient Name · Gender · Age · ID: PID-8421 · Phone<br/>Section: Active Medications with short IDs (MED-6661, MED-6662)<br/>Section: Confirmed & Pending Appointments (APT-1001)"]
+    ApptBranch --> Assemble
+    GeneralBranch --> Assemble
+    
+    Assemble --> Output["Render Rich Markdown Profile in Doctor Chat Panel"]
+    RosterSample --> Output
+```
+
+---
+
+### Flow C: RAG Consultation Document Ingestion Pipeline
+
+```mermaid
+flowchart TB
+    DocInput["Doctor Action<br/>1. Uploads Consultation PDF<br/>OR<br/>2. Pastes raw consultation note text"]
+    
+    PDFCheck{Input is PDF byte stream?}
+    DocInput --> PDFCheck
+    
+    PDFCheck -- Yes --> PDFReader["pypdf Text Extraction<br/>extract_text_from_pdf() iterates pages"]
+    PDFCheck -- No --> RawText["Direct Raw Text String"]
+    
+    PDFReader --> GroqNLP["Groq Clinical NLP Extraction<br/>Model: openai/gpt-oss-20b<br/>Schema: diagnosis, symptoms, vitals (BP/sugar/wt),<br/>medications by mealtime, follow-up date, diagnostics"]
+    RawText --> GroqNLP
+    
+    GroqNLP --> PreviewCard["Structured Verification Preview Gate<br/>Displays parsed entities in chat with checkmark icons.<br/>Prompts: 'Would you like me to update and save these records to Supabase?'"]
+    
+    PreviewCard --> GateCheck{Physician Approval<br/>'yes' / 'confirm'}
+    
+    GateCheck -- Rejects --> Abort["Clear pending_action and notify cancellation"]
+    
+    GateCheck -- Approves --> Transaction["Execute ingest_consultation_to_supabase()"]
+    
+    subgraph SupabaseWrites["Live Supabase Database Synchronization (5 Tables)"]
+        W1["1. UPDATE patients<br/>SET patient_summary = :new_summary"]
+        W2["2. INSERT INTO consultations<br/>(consultation_id, diagnosis, vitals, summary)"]
+        W3["3. INSERT INTO appointments<br/>(appointment_id, date, time, type='FollowUp', status='Confirmed')"]
+        W4["4. INSERT INTO prescription_details<br/>(prescription_item_id, medicine_id, meal_timing, dosage, instructions)"]
+        W5["5. INSERT INTO diagnostics & diagnostics_results<br/>(order_id, test_name, category, order_status)"]
+    end
+    
+    Transaction --> W1
+    Transaction --> W2
+    Transaction --> W3
+    Transaction --> W4
+    Transaction --> W5
+    
+    SupabaseWrites --> SyncReceipt["Format Ingestion Sync Receipt<br/>Includes short IDs: PID-8421, CON-1001, MED-6661, APT-1001<br/>Directs doctor to switch to 👤 Patient View to inspect live updates"]
+```
+
+---
+
+### Flow D: Patient Natural Language Medication Intake & Notification Dismissal
+
+```mermaid
+flowchart TD
+    PatMessage["Patient chat message<br/>(e.g., 'I took dolo' / 'took my pantocid')"]
+    
+    IntakeMatcher{"Intake Intent Matcher<br/>contains 'took', 'taken', or 'had my'<br/>AND matches active medication name"}
+    
+    PatMessage --> IntakeMatcher
+    
+    IntakeMatcher -- No match --> LangGraphRoute["Route to standard LangGraph orchestrator<br/>(Summary, Reminder, or Escalation agent)"]
+    
+    IntakeMatcher -- Matched Prescription --> FindItem["Resolve prescription_item_id in patient's active medication list"]
+    
+    FindItem --> MutateDB["Call toggle_prescription_taken_in_supabase()<br/>UPDATE prescription_details SET is_taken = TRUE<br/>WHERE prescription_item_id = :id"]
+    
+    MutateDB --> LocalState["Update session state DATA['medications']<br/>is_taken = True & record_activity_update()"]
+    
+    LocalState --> EvalNotifs{"Notification Centre Check<br/>has_pending_meal_meds?<br/>Check if any untaken meds remain for that meal"}
+    
+    EvalNotifs -- All meal meds taken --> DismissCard["Dismiss Medication Check Alert Card<br/>from Notification Centre"]
+    EvalNotifs -- Un-taken meds remain --> RetainCard["Retain alert card for remaining doses"]
+    
+    DismissCard --> Reply["Deliver warm confirmation reply:<br/>'Great job! Marked Dolo 650 mg as taken in your hospital record.<br/>Your medication card and notification centre have been updated.'"]
+    RetainCard --> Reply
+```
+
+---
+
+### Flow E: Patient Self-Service Reschedule Convergence
+
+```mermaid
+flowchart TD
+    PatientTrigger["Patient opens Appointments Tab<br/>OR asks: 'When is my upcoming appointment?'"]
+    
+    FetchStatus["Fetch appointment status from Supabase"]
+    PatientTrigger --> FetchStatus
+    
+    StatusCheck{"Is appointment status == 'Pending'<br/>or 'Rescheduled'?"}
+    FetchStatus --> StatusCheck
+    
+    StatusCheck -- No: 'Confirmed' --> ShowNormal["Render confirmed card with green checkmark<br/>Display date, time, location, prep instructions"]
+    
+    StatusCheck -- Yes: 'Pending' --> ShowBanner["Render Action Required Banner<br/>'⚠️ Doctor schedule adjusted. Proposed slot: 26 Oct 10:00 AM.<br/>Please confirm if this works or select an alternate slot.'"]
+    
+    ShowBanner --> Choice{"Patient Action"}
+    
+    Choice -- Clicks 'Confirm' --> ConfirmAction["Call update_appointment_in_supabase()<br/>UPDATE appointments SET status = 'Confirmed'"]
+    ConfirmAction --> ToastSuccess["Show Toast: 'Appointment confirmed!'<br/>Card status updates to green Confirmed badge"]
+    
+    Choice -- Clicks 'Reschedule' --> SlotPicker["Open Interactive Cadence Slot Selector<br/>Generate 15m slots with 5m buffers across doctor's working hours"]
+    
+    SlotPicker --> PickNewTime["Patient selects preferred date & time<br/>(e.g., 27 Oct at 02:20 PM)"]
+    
+    PickNewTime --> SaveNewPending["Call update_appointment_in_supabase()<br/>UPDATE appointments SET appointment_datetime = new_dt,<br/>status = 'Pending'<br/>Attach request note for scheduling desk"]
+    
+    SaveNewPending --> ToastResched["Show Toast: 'Reschedule submitted! Awaiting clinic confirmation.'"]
+```
+
+---
+
+### Flow F: Doctor Dynamic Schedule & Exact Appointment Count Query
+
+```mermaid
+flowchart TD
+    DocQuery["Doctor Query<br/>(e.g., 'what is my schedule on 22nd', 'appointments on 21st oct')"]
+    
+    RegexMatch{"Word-Boundary Regex Parser<br/>\\b(2[0-9]|3[01]|1[0-9]|[1-9])(st|nd|rd|th)?\\b<br/>Matches day number without substring traps"}
+    DocQuery --> RegexMatch
+    
+    RegexMatch -- Day Detected: 22 --> MonthCheck{"Is Month Explicitly Mentioned?<br/>('oct', 'november', etc.)"}
+    RegexMatch -- No Day Found --> FallbackToday["Default to Current Selected Date in Agenda"]
+    
+    MonthCheck -- Yes --> BuildDate["Construct Target Date: YYYY-MM-DD"]
+    MonthCheck -- No Month --> DefaultMonth["Default to Month of Currently Viewed Week<br/>(October 2026)"]
+    DefaultMonth --> BuildDate
+    FallbackToday --> BuildDate
+    
+    BuildDate --> DBQuery["Query Supabase appointments Table<br/>SELECT * FROM appointments<br/>WHERE doctor_id = :doctor_id<br/>AND DATE(appointment_datetime) = :target_date<br/>ORDER BY appointment_datetime ASC"]
+    
+    DBQuery --> ApptCount{"Count Appointments"}
+    ApptCount -- 0 Appointments --> EmptyNotice["Return 'No appointments scheduled for [Date]'<br/>Show OPD session timing & open slot capacity"]
+    
+    ApptCount -- >0 Appointments --> TabularFormat["Format Clean Markdown OPD Table<br/>Header: 'Schedule for Dr. Rhea Mehta · [Date] (Total: N appointments)'<br/>Columns: Time · Patient Name (PID-XXXX) · Visit Type · Status (APT-XXXX)"]
+    
+    TabularFormat --> DocChatOutput["Render in Doctor Chat Panel & Highlight Agenda Card"]
+    EmptyNotice --> DocChatOutput
+```
+
+---
+
+### Flow G: Patient Emergency Safety Escalation & Resolution Lifecycle
+
+```mermaid
+flowchart TD
+    PatientInput["Patient message in Care Chat<br/>(e.g., 'severe chest pain', 'shortness of breath', 'wrong blood report')"]
+    
+    SafetyTriage{"Deterministic Safety Triage<br/>Contains acute red-flags:<br/>'chest pain', 'breathing', 'fever > 102', 'bleeding', 'wrong report'"}
+    PatientInput --> SafetyTriage
+    
+    SafetyTriage -- Red-Flag Detected --> ImmediateSafety["Deliver Immediate Deterministic Safety Advice:<br/>'⚠️ If you are experiencing acute chest pain or shortness of breath,<br/>call hospital emergency immediately at +91 22 4000 1122 or proceed to OPD Wing B.'"]
+    
+    ImmediateSafety --> InsertTicket["Insert Ticket into escalation_agent_data<br/>escalation_id = UUID, patient_id = PID-8421,<br/>status = 'Open', priority = 'Critical',<br/>reason = parsed red-flag symptom"]
+    
+    InsertTicket --> ActionButtons["Display Interactive Action Buttons in Chat:<br/>1. [Request Report Reissue]<br/>2. [Contact Clinical Coordinator]<br/>3. [Acknowledge Safety Advice]"]
+    
+    ActionButtons --> UserAction{"Patient Clicks Resolution Action"}
+    
+    UserAction -- Clicks Button --> ResolveTicket["Call update_escalation_status_in_supabase()<br/>UPDATE escalation_agent_data<br/>SET status = 'Resolved', resolved_at = NOW()<br/>WHERE escalation_id = :id"]
+    
+    ResolveTicket --> ResolutionReceipt["Deliver Warm Resolution Message:<br/>'Your ticket has been logged and marked resolved with the care team.<br/>A clinical coordinator will contact you shortly.'"]
+    
+    SafetyTriage -- No Red-Flags --> NormalCareRoute["Route to LangGraph Care Orchestrator<br/>(Summary, Reminders, or Meal Dosing)"]
+```
+
+---
+
+### Flow H: Longitudinal Recovery Tracking, Biomarkers & Medication Adherence
+
+```mermaid
+flowchart TD
+    QueryInput["Patient Query<br/>(e.g., 'how is my recovery', 'what is my medication adherence', 'tell me about Dr. Rhea Mehta')"]
+    
+    IntentRouter{"Intent Classification"}
+    QueryInput --> IntentRouter
+    
+    IntentRouter -- Doctor Credentials Query --> DocLookup["Query doctors Table<br/>SELECT doctor_name, qualifications, department, room_no<br/>WHERE doctor_id = :primary_doctor_id"]
+    DocLookup --> DocProfileCard["Format Attending Physician Credentials Card<br/>'Dr. Rhea Mehta · MS, DNB (Surgical Gastroenterology)<br/>Lead Laparoscopic Surgeon · OPD Wing B, Room 304'"]
+    
+    IntentRouter -- Recovery & Trends Query --> ClinicalData["Fetch Clinical Records from Supabase<br/>1. consultations (vitals: BP, sugar, weight, surgical clearance)<br/>2. diagnostics_results (WBC trends, reference ranges)<br/>3. prescription_details (prescribed vs taken counts)"]
+    
+    ClinicalData --> AdherenceCalc["Compute Medication Adherence Ratio:<br/>Adherence % = (Count of is_taken=TRUE / Total Active Prescriptions) * 100<br/>e.g., '1 of 3 taken · 33% adherence'"]
+    
+    AdherenceCalc --> RecoveryReport["Assemble Longitudinal Progress Report:<br/>• Incision healing: Clean, dry, no erythema<br/>• Diet Progression: Pureed to soft solid foods tolerated<br/>• Lab Marker Trend: WBC normalized to 7,200 /mcL (4,500-11,000)<br/>• Medication Compliance: 33% (Lunch Dolo taken, Dinner pending)"]
+    
+    RecoveryReport --> RenderPatientChat["Render Rich Recovery Narrative in Patient Chat"]
+    DocProfileCard --> RenderPatientChat
+```
+
+---
+
+## 3. Appointment State Transition Machine & PostgreSQL Enum Hardening
 
 In the live Supabase PostgreSQL database, the `appointments.status` column is strictly constrained to the custom enum `appointment_status_enum`. Any unmapped text representation throws error `22P02`. VESPH Care implements canonical normalization to enforce deterministic state transitions:
 
@@ -218,85 +534,7 @@ STATUS_NORMALIZATION_MAP = {
 
 ---
 
-## 5. Patient Medication Adherence & Notification Dismissal Flow
-
-VESPH Care connects patient conversational chat with electronic medication administration records (eMAR). When patients mention taking medicine in colloquial language, the system identifies the dose, mutates the database, and dismisses pending alerts.
-
-```mermaid
-flowchart TD
-    Start["Patient enters chat message<br/>(e.g., 'I took dolo' / 'took my morning pantocid')"]
-    
-    Detect{"Regex & Keyword Intake Matcher<br/>contains 'took', 'taken', or 'had my'<br/>AND matches active prescription name"}
-    
-    Start --> Detect
-    
-    Detect -- No --> StandardRoute["Route to Normal LangGraph Orchestrator<br/>(Summary, Reminder, or Escalation)"]
-    
-    Detect -- Yes --> FindMed["Identify target prescription_item_id<br/>in patient's active medication list"]
-    
-    FindMed --> DBUpdate["Call toggle_prescription_taken_in_supabase()<br/>UPDATE prescription_details SET is_taken = TRUE<br/>WHERE prescription_item_id = :id"]
-    
-    DBUpdate --> StateUpdate["Update local session state DATA['medications']<br/>is_taken = True & record_activity_update()"]
-    
-    StateUpdate --> ReEval{"Notification Centre Evaluation<br/>has_pending_meal_meds?<br/>Check if any untaken meds remain for meal"}
-    
-    ReEval -- All taken for meal --> DismissCard["Dismiss Medication Check Alert Card<br/>from Notification Centre"]
-    ReEval -- Other meds pending --> KeepCard["Keep alert card active<br/>for remaining untaken medications"]
-    
-    DismissCard --> Reply["Post conversational confirmation:<br/>'Great job! I've marked your Dolo 650 mg as taken in your hospital record.<br/>Your medication card and notification centre have been updated.'"]
-    KeepCard --> Reply
-```
-
----
-
-## 6. RAG Consultation Document Ingestion Pipeline
-
-The Doctor Portal provides an autonomous document ingestion pipeline that extracts unstructured consultation notes into normalized multi-table database records:
-
-```mermaid
-flowchart TB
-    Doc["Physician Input<br/>• Uploads PDF Consultation Note<br/>OR<br/>• Pastes raw clinical note text into chat"]
-    
-    PDFParse["pypdf Text Extraction<br/>extract_text_from_pdf() reads raw byte stream"]
-    
-    Doc --> PDFParse
-    
-    GroqNLP["Groq Clinical NLP Extraction<br/>Model: openai/gpt-oss-20b<br/>System Prompt: Strict Clinical Entity Schema<br/>Extracts: diagnosis, symptoms, vitals (BP/sugar/wt),<br/>medications by mealtime, follow-up date, diagnostic lab orders"]
-    
-    PDFParse --> GroqNLP
-    
-    Preview["Clinical Verification Preview Gate<br/>Displays structured extraction card in chat with extracted vitals,<br/>prescriptions, and follow-ups. Awaits doctor confirmation."]
-    
-    GroqNLP --> Preview
-    
-    Gate{"Doctor Confirmation<br/>'yes' / 'confirm'"}
-    
-    Preview --> Gate
-    
-    Gate -- Doctor Rejects --> Cancel["Cancel ingestion & clear pending action"]
-    
-    Gate -- Doctor Confirms --> Transact["Execute ingest_consultation_to_supabase()"]
-    
-    subgraph MultiTableWrites["Transactional Supabase Writes (5 Tables)"]
-        T1["1. UPDATE patients<br/>SET patient_summary = :new_summary"]
-        T2["2. INSERT INTO consultations<br/>(consultation_id, diagnosis, bp, sugar, weight, summary)"]
-        T3["3. INSERT INTO appointments<br/>(appointment_id, date, time, type = 'FollowUp', status = 'Confirmed')"]
-        T4["4. INSERT INTO prescription_details<br/>(prescription_item_id, medicine_id, meal_timing, dosage, instructions)"]
-        T5["5. INSERT INTO diagnostics & diagnostics_results<br/>(order_id, test_name, category, order_status)"]
-    end
-    
-    Transact --> T1
-    Transact --> T2
-    Transact --> T3
-    Transact --> T4
-    Transact --> T5
-    
-    MultiTableWrites --> Receipt["Generate Synchronized Receipt Report<br/>Displays formatted short IDs: PID-8421, CON-1001, MED-6661, APT-1001<br/>Directs doctor to switch to 👤 Patient View to inspect live updates"]
-```
-
----
-
-## 7. Standardized Short Identifier (ID) System Specification
+## 4. Standardized Short Identifier (ID) System Specification
 
 To prevent raw 36-character UUID strings from cluttering the clinical user interface and conversational chat, VESPH Care implements a centralized short ID system:
 
@@ -309,14 +547,9 @@ To prevent raw 36-character UUID strings from cluttering the clinical user inter
 | **Consultation** | UUID v4 | `CON-XXXX` | `CON-1001` | `short_consultation_id(cid)` |
 | **Diagnostic Lab** | UUID v4 | `LAB-XXXX` | `LAB-1001` | `short_diagnostic_id(did)` |
 
-### Formatting Logic (`tools/db_tools.py`)
-- Strips hyphens and extracts trailing uppercase alphanumeric characters.
-- Overrides canonical demo fixtures (e.g. `22222222-...` maps to `PID-8421`, `11111111-...` maps to `DOC-RHEA-01`).
-- Applied universally across timeline cards, detail popups, download filenames (e.g. `medication-MED-6661.txt`), clinical chart modals, and doctor chat responses.
-
 ---
 
-## 8. Relational Database Schema & Data Dictionary
+## 5. Relational Database Schema & Data Dictionary
 
 VESPH Care operates on 10 interconnected tables hosted on a live Supabase PostgreSQL instance:
 
@@ -399,7 +632,7 @@ erDiagram
 
 ---
 
-## 9. AWS EC2 Production Deployment & Cloud Architecture
+## 6. AWS EC2 Production Deployment & Cloud Architecture
 
 ```mermaid
 flowchart TD
@@ -487,7 +720,7 @@ server {
 
 ---
 
-## 10. Automated Test Suite Matrix
+## 7. Automated Test Suite Matrix
 
 The platform is validated by 19 automated unit tests covering safety-critical routing, rescheduling state transitions, and database enum compatibility:
 
@@ -520,7 +753,7 @@ python -m unittest discover tests -v
 
 ---
 
-## 11. Engineering Challenges & Solutions
+## 8. Engineering Challenges & Solutions
 
 | Challenge Encountered | Root Cause | Engineering Solution |
 |---|---|---|
@@ -532,7 +765,7 @@ python -m unittest discover tests -v
 
 ---
 
-## 12. Conclusion & Future Roadmap
+## 9. Conclusion & Future Roadmap
 
 VESPH Care provides an enterprise-ready blueprint for post-discharge clinical coordination. By fusing deterministic state machines for safety-critical actions with scoped LLM extraction and relational PostgreSQL persistence, it reduces physician administrative overhead while providing patients with clear, structured recovery guidance.
 
