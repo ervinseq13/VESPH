@@ -7,12 +7,19 @@ included in prompts, status messages, logs, or exceptions returned to users.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
 
 from groq import Groq
 from supabase import Client, create_client
@@ -85,12 +92,27 @@ class IntegrationSettings:
                 value = environment.get(name, fallback)
             return str(value).strip() if value is not None else fallback
 
+        groq_key = (
+            read("GROQ_API_KEY")
+            or read("LLM_API_KEY")
+            or read("groq_api_key")
+            or read("llm_api_key")
+        )
+        groq_model = (
+            read("GROQ_MODEL")
+            or read("LLM_MODEL")
+            or read("groq_model")
+            or read("llm_model")
+            or DEFAULT_GROQ_MODEL
+        ) or DEFAULT_GROQ_MODEL
+        supabase_url = read("SUPABASE_URL").rstrip("/")
+        supabase_key = read("SUPABASE_KEY")
+
         return cls(
-            groq_api_key=read("LLM_API_KEY"),
-            groq_model=read("GROQ_MODEL", DEFAULT_GROQ_MODEL)
-            or DEFAULT_GROQ_MODEL,
-            supabase_url=read("SUPABASE_URL").rstrip("/"),
-            supabase_key=read("SUPABASE_KEY"),
+            groq_api_key=groq_key,
+            groq_model=groq_model,
+            supabase_url=supabase_url,
+            supabase_key=supabase_key,
         )
 
 
@@ -111,6 +133,12 @@ class IntegrationHub:
 
     @property
     def groq_configured(self) -> bool:
+        if not self.settings.groq_api_key:
+            # Check if key was added to environment or secrets dynamically after initial load
+            refreshed = IntegrationSettings.from_sources()
+            if refreshed.groq_api_key:
+                self.settings = refreshed
+                self._groq = None
         return bool(self.settings.groq_api_key)
 
     @property
@@ -121,7 +149,7 @@ class IntegrationHub:
         if not self.groq_configured:
             raise RuntimeError("Groq is not configured")
         if self._groq is None:
-            self._groq = Groq(api_key=self.settings.groq_api_key, timeout=12.0)
+            self._groq = Groq(api_key=self.settings.groq_api_key, timeout=25.0)
         return self._groq
 
     def supabase_client(self) -> Client:
@@ -207,7 +235,9 @@ class IntegrationHub:
             p_name = care_data.get("patient", {}).get("first_name", "Patient")
             record_context = {
                 "patient_summary": care_data.get("patient", {}),
+                "allergies": care_data.get("patient", {}).get("allergies", ["Penicillin"]),
                 "appointments": care_data.get("appointments", []),
+                "consultations": care_data.get("consultations", []),
                 "diagnostics": care_data.get("diagnostics", []),
                 "medications": care_data.get("medications", []),
                 "discharge": care_data.get("discharge", {}),
@@ -225,6 +255,7 @@ class IntegrationHub:
             {"role": "user", "content": user_content},
         ]
 
+        # 1. Primary model call
         try:
             response = self._groq_client().chat.completions.create(
                 model=self.settings.groq_model,
@@ -233,21 +264,44 @@ class IntegrationHub:
                 max_completion_tokens=650,
             )
             content = response.choices[0].message.content
-            return content.strip() if content else None
-        except Exception:
-            return None
+            if content and content.strip():
+                return content.strip()
+        except Exception as error:
+            logging.warning("Groq inference error with primary model '%s': %s", self.settings.groq_model, error)
+
+        # 2. Resilient fallback across common Groq models in case primary model is unavailable or rate limited
+        fallback_models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+        for fb_model in fallback_models:
+            if fb_model == self.settings.groq_model:
+                continue
+            try:
+                fb_response = self._groq_client().chat.completions.create(
+                    model=fb_model,
+                    messages=messages,
+                    temperature=0.2,
+                    max_tokens=650,
+                )
+                fb_content = fb_response.choices[0].message.content
+                if fb_content and fb_content.strip():
+                    logging.info("Resilient fallback succeeded using Groq model: %s", fb_model)
+                    return fb_content.strip()
+            except Exception as fb_err:
+                logging.warning("Fallback model '%s' failed: %s", fb_model, fb_err)
+
+        return None
 
     def check_groq(self) -> ServiceStatus:
         if not self.groq_configured:
-            return ServiceStatus(False, False, "LLM_API_KEY is not configured.")
+            return ServiceStatus(False, False, "GROQ_API_KEY (or LLM_API_KEY) is not configured in .streamlit/secrets.toml or environment.")
         try:
             models = self._groq_client().models.list()
             model_ids = {model.id for model in models.data}
             if self.settings.groq_model not in model_ids:
+                available_preview = ", ".join(sorted(list(model_ids))[:4])
                 return ServiceStatus(
                     True,
                     False,
-                    f"Groq is reachable, but {self.settings.groq_model} is unavailable.",
+                    f"Groq API key is valid, but model '{self.settings.groq_model}' is not in active model list. Available models: {available_preview}",
                 )
             return ServiceStatus(
                 True,

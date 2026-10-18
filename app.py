@@ -4,6 +4,12 @@ from datetime import datetime
 from html import escape
 from pathlib import Path
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
 import streamlit as st
 
 from tools.pdf_tools import generate_record_pdf
@@ -2333,7 +2339,8 @@ def render_patient_portal() -> None:
 
     with right:
         st.markdown('<span class="right-panel-marker"></span>', unsafe_allow_html=True)
-        panel_header("Care assistant", "")
+        groq_badge = f"⚡ Live Groq AI ({INTEGRATIONS.settings.groq_model})" if INTEGRATIONS.groq_configured else "🛡️ Specialist Safety Mode"
+        panel_header("Care assistant", "", groq_badge)
 
         chat_box = st.container(border=False, key="chat_history")
         with chat_box:
@@ -2664,7 +2671,8 @@ def render_doctor_portal() -> None:
 
     with doc_right:
         st.markdown('<span class="right-panel-marker"></span>', unsafe_allow_html=True)
-        panel_header("Clinical Assistant", "")
+        doc_groq_badge = f"⚡ Live Groq AI ({INTEGRATIONS.settings.groq_model})" if INTEGRATIONS.groq_configured else "🛡️ Specialist Mode"
+        panel_header("Clinical Assistant", "", doc_groq_badge)
 
         doc_chat_box = st.container(border=False, key="doctor_chat_history")
         with doc_chat_box:

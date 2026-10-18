@@ -14,10 +14,21 @@ CONNECTION_TERMS = (
     "connection status",
     "connections working",
     "groq connected",
+    "is groq connected",
+    "is groq working",
+    "why is groq not working",
+    "groq working",
+    "groq status",
+    "test groq",
     "supabase connected",
     "llm connected",
+    "is llm connected",
+    "is llm working",
+    "llm status",
     "llm and supabase",
     "groq and supabase",
+    "system status",
+    "status check",
 )
 
 
