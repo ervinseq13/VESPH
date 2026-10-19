@@ -50,7 +50,7 @@ def extract_text_from_pdf(pdf_source: bytes | io.BytesIO) -> str:
 def parse_consultation_text(
     text: str,
     groq_client: Any | None = None,
-    groq_model: str = "openai/gpt-oss-20b",
+    groq_model: str = "llama-3.3-70b-versatile",
 ) -> dict[str, Any]:
     """Parse consultation text into structured clinical fields.
 
@@ -115,7 +115,7 @@ def parse_consultation_text(
                     {"role": "user", "content": extraction_prompt},
                 ],
                 temperature=0.1,
-                max_completion_tokens=900,
+                max_tokens=900,
             )
             raw_out = resp.choices[0].message.content.strip()
             # Clean possible markdown formatting
@@ -278,13 +278,14 @@ def ingest_consultation_to_supabase(
     parsed: dict[str, Any],
     doctor_id: str = "11111111-1111-1111-1111-111111111111",
     default_patient_id: str = "22222222-2222-2222-2222-222222222222",
+    appointment_id: str | None = None,
 ) -> dict[str, Any]:
     """Apply parsed consultation findings into live Supabase tables.
 
     Updates:
       1. patients table (summary, vital stats)
       2. consultations table (new consultation row)
-      3. appointments table (newly scheduled follow-ups)
+      3. appointments table (newly scheduled follow-ups and target appointment summary)
       4. prescription_details table (newly prescribed meds grouped by mealtime)
       5. diagnostics table (diagnostic lab orders)
     """
@@ -301,12 +302,33 @@ def ingest_consultation_to_supabase(
     except Exception:
         pass
 
-    # 2. Update Patient Summary in patients table
-    updated_summary = parsed.get("patient_summary") or parsed.get("consultation_summary") or "Post-consultation follow-up completed."
+    # 2. Update Patient Summary in patients table with up-to-date diagnosis, findings, and vitals
+    vitals = parsed.get("vitals") or {}
+    v_parts = []
+    if vitals.get("bp_systolic") and vitals.get("bp_diastolic"):
+        v_parts.append(f"BP {vitals['bp_systolic']}/{vitals['bp_diastolic']} mmHg")
+    if vitals.get("sugar_reading"):
+        v_parts.append(f"Sugar {vitals['sugar_reading']} mg/dL")
+    v_str = f" Vitals: {', '.join(v_parts)}." if v_parts else ""
+
+    key_summary = parsed.get("consultation_summary") or parsed.get("diagnosis") or "Clinical follow-up completed."
+    diag_str = parsed.get("diagnosis", "Clinical Consultation")
+    plan_str = f" Plan: {parsed.get('treatment_plan')}." if parsed.get("treatment_plan") else ""
+
+    updated_summary = f"{diag_str}: {key_summary}{v_str}{plan_str}".strip()
     try:
         client.table("patients").update({"patient_summary": updated_summary}).eq("patient_id", target_pid).execute()
     except Exception:
         pass
+
+    # Update specific target appointment if supplied
+    if appointment_id:
+        try:
+            client.table("appointments").update({
+                "appointment_summary": key_summary,
+            }).eq("appointment_id", appointment_id).execute()
+        except Exception:
+            pass
 
     # 3. Create Consultation Record
     new_consult_id = str(uuid4())
@@ -463,9 +485,14 @@ def ingest_consultation_to_supabase(
         "patient_id": target_pid,
         "patient_name": parsed.get("patient_name", "Ananya Iyer"),
         "consultation_id": new_consult_id,
+        "appointment_id": appointment_id,
         "summary_updated": True,
         "new_summary": updated_summary,
+        "key_summary": key_summary,
         "diagnosis": parsed.get("diagnosis", "Clinical Follow-up"),
+        "symptoms": parsed.get("symptoms", ""),
+        "treatment_plan": parsed.get("treatment_plan", ""),
+        "vitals": vitals,
         "appointments_created": appts_created,
         "medications_added": meds_added,
         "diagnostics_ordered": diags_ordered,

@@ -4,6 +4,8 @@ from datetime import datetime
 from html import escape
 import logging
 from pathlib import Path
+import re
+from typing import Any
 
 try:
     from dotenv import load_dotenv
@@ -1022,18 +1024,159 @@ def format_ingestion_report(res: dict[str, Any], doc_title: str) -> str:
     return "\n".join(md)
 
 
-def handle_consultation_pdf_ingestion(pdf_bytes: bytes, file_name: str = "Uploaded Consultation Note") -> None:
-    """Process consultation PDF bytes, extract clinical text, parse, and sync to Supabase."""
+def handle_appointment_document_ingestion(
+    pdf_bytes: bytes,
+    file_name: str = "Appointment Document",
+    target_appointment_id: str | None = None,
+) -> dict[str, Any]:
+    """Process consultation/appointment PDF bytes, update target appointment, sync to Supabase,
+    and immediately update all 4 profile summaries (Health, Diagnostic, Medication, Appointment)
+    so patient care views never possess stale information."""
     client = INTEGRATIONS.supabase_client()
     text = extract_text_from_pdf(pdf_bytes)
     groq_c = INTEGRATIONS._groq_client() if INTEGRATIONS.groq_configured else None
     parsed = parse_consultation_text(text, groq_client=groq_c)
+
     res = ingest_consultation_to_supabase(
         client,
         parsed,
-        doctor_id=st.session_state.active_doctor_id,
-        default_patient_id=st.session_state.active_patient_id,
+        doctor_id=st.session_state.get("active_doctor_id"),
+        default_patient_id=st.session_state.get("active_patient_id"),
+        appointment_id=target_appointment_id,
     )
+
+    key_summary = res.get("key_summary") or parsed.get("summary") or "Consultation notes ingested and reviewed."
+    diag = res.get("diagnosis") or parsed.get("diagnosis") or "Clinical consultation"
+    tx_plan = res.get("treatment_plan") or parsed.get("treatment_plan") or ""
+    vitals = res.get("vitals") or parsed.get("vitals") or {}
+    bp = vitals.get("blood_pressure")
+
+    care_data = st.session_state.get("care_data")
+    target_appt = None
+    if care_data:
+        # 1. Update target appointment card with key summary
+        appts = care_data.get("appointments", [])
+        if target_appointment_id:
+            for appt in appts:
+                if str(appt.get("id")) == str(target_appointment_id):
+                    appt["summary"] = key_summary
+                    appt["appointment_summary"] = key_summary
+                    target_appt = appt
+                    break
+        if not target_appt and appts:
+            upcoming = [a for a in appts if not is_appointment_past(a)]
+            chosen = upcoming[0] if upcoming else appts[0]
+            chosen["summary"] = key_summary
+            chosen["appointment_summary"] = key_summary
+            target_appt = chosen
+
+        # 2. Add newly scheduled follow-up appointments
+        for new_appt in res.get("appointments_created", []):
+            care_data.setdefault("appointments", []).insert(0, {
+                "id": new_appt.get("appointment_id") or new_appt.get("id") or f"APT-{int(datetime.now().timestamp())}",
+                "date": new_appt.get("date"),
+                "time": new_appt.get("time"),
+                "doctor": new_appt.get("doctor") or "Dr. Rhea Mehta",
+                "department": new_appt.get("department", "General Surgery"),
+                "type": new_appt.get("type", "FollowUp"),
+                "status": "Confirmed",
+                "summary": new_appt.get("summary") or "Follow-up consultation",
+                "appointment_summary": new_appt.get("summary") or "Follow-up consultation",
+                "location": "Outpatient Clinic, Room 304",
+                "preparation": "Please bring previous records and vitals log.",
+            })
+
+        # 3. Add newly prescribed medications to care_data
+        for m in res.get("medications_added", []):
+            clean_brand = re.sub(r"\s*\d+\s*$", "", str(m.get("name", ""))).strip()
+            dosage = str(m.get("dosage", "")).strip()
+            disp_name = f"{clean_brand} {dosage}".strip() if (clean_brand and dosage) else (f"{m.get('name', '')} {dosage}".strip() if dosage else str(m.get("name", "")))
+            care_data.setdefault("medications", []).insert(0, {
+                "id": m.get("medicine_id") or m.get("id") or f"MED-{int(datetime.now().timestamp())}",
+                "name": disp_name,
+                "instruction": m.get("instructions") or f"Take with {m.get('meal_timing', 'meals')}",
+                "duration": f"{m.get('duration_days', 7)} days",
+                "next_dose": f"Next {m.get('meal_timing', 'meal')}",
+                "status": "Active prescription",
+                "meal_timing": m.get("meal_timing", "breakfast"),
+            })
+
+        # 4. Add newly ordered diagnostics
+        for d in res.get("diagnostics_ordered", []):
+            care_data.setdefault("diagnostics", []).insert(0, {
+                "id": d.get("order_id") or d.get("id") or f"DIAG-{int(datetime.now().timestamp())}",
+                "date": datetime.now().strftime("%d %b %Y"),
+                "name": d.get("name", "Lab Test"),
+                "category": d.get("category", "Diagnostic"),
+                "ordered_by": "Attending Physician",
+                "status": "Ordered / Pending",
+                "summary": d.get("summary", "Ordered during consultation"),
+                "flag": "Priority routine",
+            })
+
+        # 5. Update patient summaries (Health, Diagnostic, Medication, Appointment)
+        if "patient" in care_data:
+            pat = care_data["patient"]
+
+            # 5a. Health Summary
+            vitals_snippet = f" · BP: {bp}" if bp else ""
+            plan_snippet = f" Plan: {tx_plan}" if tx_plan else ""
+            pat["health_summary"] = f"{diag} — {key_summary}{vitals_snippet}.{plan_snippet}".strip()
+
+            # 5b. Diagnostic Summary
+            ordered_labs = [d.get("name") for d in res.get("diagnostics_ordered", [])]
+            if ordered_labs:
+                pat["diagnostic_summary"] = f"Recent orders from consultation: {', '.join(ordered_labs)} (pending lab review)."
+            else:
+                pat["diagnostic_summary"] = f"Diagnostic review completed during consultation for {diag}; routine status maintained."
+
+            # 5c. Medication Summary
+            active_meds = care_data.get("medications", [])
+            if active_meds:
+                top_meds = [m.get("name") for m in active_meds[:4]]
+                pat["medication_summary"] = f"Active regimen: {', '.join(top_meds)}. Scheduled with meals."
+            else:
+                pat["medication_summary"] = "No active medications currently prescribed."
+
+            # 5d. Appointment Summary
+            target_info = f"with {target_appt.get('doctor')}" if target_appt else ""
+            follow_ups = res.get("appointments_created", [])
+            if follow_ups:
+                nxt = follow_ups[0]
+                pat["appointment_summary"] = f"Consultation {target_info} completed ({diag}). Next follow-up: {nxt.get('date')} at {nxt.get('time')}."
+            elif target_appt:
+                pat["appointment_summary"] = f"Consultation on {target_appt.get('date')} {target_info} completed. Clinical findings logged."
+            else:
+                pat["appointment_summary"] = f"Consultation for {diag} logged. Follow-up as scheduled."
+
+    st.session_state._patient_data_id = None
+    st.session_state._doctor_data_id = None
+    st.session_state._loaded_patient_id = None
+
+    record_activity_update(f"Appointment document '{file_name}' ingested and summaries updated")
+    st.toast("Appointment document ingested & summaries updated!", icon="📄")
+
+    if "messages" in st.session_state:
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": (
+                f"📄 **Appointment Document Ingested: {file_name}**\n\n"
+                f"**Clinical Summary:** {key_summary}\n\n"
+                "✓ **Appointment Card:** Updated with key clinical findings.\n"
+                "✓ **Health Summary:** Updated with current diagnosis & vitals.\n"
+                "✓ **Diagnostic Summary:** Updated with recent test orders.\n"
+                "✓ **Medication Summary:** Updated with newly prescribed medicines.\n"
+                "✓ **Appointment Summary:** Updated with recent visit & follow-up."
+            ),
+            "agent": "Clinical Ingestion Agent",
+        })
+
+    return res
+
+
+def handle_consultation_pdf_ingestion(pdf_bytes: bytes, file_name: str = "Uploaded Consultation Note") -> None:
+    """Process consultation PDF bytes, extract clinical text, parse, and sync to Supabase."""
+    res = handle_appointment_document_ingestion(pdf_bytes, file_name=file_name)
     report_md = format_ingestion_report(res, file_name)
     st.session_state.doctor_messages.append({
         "role": "user",
@@ -1044,10 +1187,6 @@ def handle_consultation_pdf_ingestion(pdf_bytes: bytes, file_name: str = "Upload
         "content": report_md,
         "agent": "Clinical Ingestion & RAG Agent",
     })
-    st.session_state._patient_data_id = None
-    st.session_state._doctor_data_id = None
-    st.session_state._loaded_patient_id = None
-    record_activity_update("Consultation PDF ingested and synced to database")
     st.session_state["doctor_toast"] = ("Consultation note ingested and synced to Supabase!", "✅")
 
 
@@ -1256,13 +1395,62 @@ def reschedule_dialog(appointment_index: int = 0) -> None:
         st.rerun()
 
 
+@st.dialog("Ingest Appointment Document", width="large")
+def ingest_appointment_document_dialog(default_appointment_id: str | None = None) -> None:
+    st.markdown("### 📄 Ingest Appointment / Consultation Document")
+    st.caption("Upload a clinical consultation note or doctor order (PDF). VESPH will parse clinical findings, update the appointment card, and synchronize your Health Summary, Diagnostic Summary, Medication Summary, and Appointment Summary so your records stay up to date.")
+
+    appts = DATA.get("appointments", [])
+    chosen_appt_id = default_appointment_id
+    if appts:
+        appt_options = {
+            f"{a['date']} · {a['doctor']} ({a.get('type', 'Consultation')}) · {short_appointment_id(a['id'])}": a["id"]
+            for a in appts
+        }
+        labels = list(appt_options.keys())
+        default_idx = 0
+        if default_appointment_id:
+            for idx, lbl in enumerate(labels):
+                if appt_options[lbl] == default_appointment_id:
+                    default_idx = idx
+                    break
+        sel_label = st.selectbox("Select Target Appointment", labels, index=default_idx)
+        chosen_appt_id = appt_options[sel_label]
+    else:
+        st.info("No prior appointments found in records. A new consultation will be logged and linked directly to your patient profile.")
+
+    uploaded = st.file_uploader("Upload Consultation or Visit Document (PDF)", type=["pdf"], key="dialog_appt_doc_uploader")
+
+    col_proc, col_test = st.columns([1, 1], gap="small")
+    with col_proc:
+        if st.button("📄 Ingest & Update Care Record", type="primary", use_container_width=True, disabled=uploaded is None):
+            with st.spinner("Extracting clinical details and updating records..."):
+                handle_appointment_document_ingestion(
+                    uploaded.getvalue(),
+                    file_name=uploaded.name,
+                    target_appointment_id=chosen_appt_id,
+                )
+                st.rerun()
+
+    with col_test:
+        if st.button("🧪 Test with Sample Note", use_container_width=True):
+            with st.spinner("Generating sample note and syncing..."):
+                sample_bytes = generate_sample_consultation_pdf()
+                handle_appointment_document_ingestion(
+                    sample_bytes,
+                    file_name="Dr_Rhea_Mehta_Consultation.pdf",
+                    target_appointment_id=chosen_appt_id,
+                )
+                st.rerun()
+
+
 @st.dialog("Add to your care record")
 def add_item_dialog(default_action: str = "New appointment") -> None:
-    actions = ["New appointment", "Diagnostic report", "Medication", "Discharge document"]
+    actions = ["New appointment", "Appointment document", "Diagnostic report", "Medication", "Discharge document"]
     action = st.radio(
         "What would you like to add?",
         actions,
-        index=actions.index(default_action),
+        index=actions.index(default_action) if default_action in actions else 0,
         horizontal=True,
     )
     if action == "New appointment":
@@ -1299,6 +1487,38 @@ def add_item_dialog(default_action: str = "New appointment") -> None:
                 }
             )
             st.rerun()
+    elif action == "Appointment document":
+        appts = DATA.get("appointments", [])
+        chosen_appt_id = None
+        if appts:
+            appt_options = {
+                f"{a['date']} · {a['doctor']} ({a.get('type', 'Consultation')}) · {short_appointment_id(a['id'])}": a["id"]
+                for a in appts
+            }
+            labels = list(appt_options.keys())
+            sel_label = st.selectbox("Select Appointment to Link Document", labels)
+            chosen_appt_id = appt_options[sel_label]
+        uploaded = st.file_uploader("Choose an appointment consultation PDF", type=["pdf"], key="add_dialog_appt_pdf")
+        col_up, col_sm = st.columns(2)
+        with col_up:
+            if st.button("Ingest Document", type="primary", use_container_width=True, disabled=uploaded is None):
+                with st.spinner("Ingesting document and updating summaries..."):
+                    handle_appointment_document_ingestion(
+                        uploaded.getvalue(),
+                        file_name=uploaded.name,
+                        target_appointment_id=chosen_appt_id,
+                    )
+                    st.rerun()
+        with col_sm:
+            if st.button("🧪 Test with Sample PDF", use_container_width=True):
+                with st.spinner("Generating sample consultation note & syncing..."):
+                    sample_bytes = generate_sample_consultation_pdf()
+                    handle_appointment_document_ingestion(
+                        sample_bytes,
+                        file_name="Sample_Appointment_Note.pdf",
+                        target_appointment_id=chosen_appt_id,
+                    )
+                    st.rerun()
     elif action == "Diagnostic report":
         report_type = st.selectbox("Report type", ["Blood test", "Radiology", "Prescription", "Other diagnostic"])
         uploaded = st.file_uploader("Choose a PDF or image", type=["pdf", "png", "jpg", "jpeg"])
@@ -1373,6 +1593,40 @@ def record_detail_dialog(record_type: str, record: dict) -> None:
         )
         if record.get("preparation"):
             st.info(record["preparation"])
+        summary_val = (record.get("summary") or record.get("appointment_summary") or "").strip()
+        if summary_val:
+            st.markdown(
+                f"""
+                <div style="background:var(--mint); border-left:3px solid var(--teal); padding:10px 14px; border-radius:6px; margin: 10px 0 14px 0; font-size:12px; color:var(--ink); line-height:1.5;">
+                  <strong>📑 Appointment Clinical Summary:</strong><br/>{escape(summary_val)}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        with st.expander("📄 Ingest Clinical Document for this Appointment", expanded=False):
+            st.caption("Upload consultation notes, doctor orders, or clinical summaries for this appointment. VESPH will extract clinical data and update your health summaries.")
+            appt_file = st.file_uploader("Upload PDF document", type=["pdf"], key=f"uploader_appt_detail_{record['id']}")
+            col_ing, col_samp = st.columns(2)
+            with col_ing:
+                if st.button("Process Document", key=f"btn_ing_appt_{record['id']}", type="primary", use_container_width=True, disabled=appt_file is None):
+                    with st.spinner("Ingesting document and updating summaries..."):
+                        handle_appointment_document_ingestion(
+                            appt_file.getvalue(),
+                            file_name=appt_file.name,
+                            target_appointment_id=record["id"],
+                        )
+                        st.rerun()
+            with col_samp:
+                if st.button("Test Sample Note PDF", key=f"btn_samp_appt_{record['id']}", use_container_width=True):
+                    with st.spinner("Generating and ingesting sample consultation note..."):
+                        sample_bytes = generate_sample_consultation_pdf()
+                        handle_appointment_document_ingestion(
+                            sample_bytes,
+                            file_name=f"Consultation_Note_{record.get('doctor', 'Dr_Rhea')}.pdf",
+                            target_appointment_id=record["id"],
+                        )
+                        st.rerun()
         is_past = is_appointment_past(record)
         if not is_past:
             reschedule_key = f"inline_reschedule_{record['id']}"
@@ -1546,8 +1800,16 @@ def record_card(
     record: dict,
     icon: str,
 ) -> None:
+    card_label = f"**{title}**  \n{meta}"
+    if record_type == "appointment":
+        summary_val = (record.get("summary") or record.get("appointment_summary") or "").strip()
+        if summary_val:
+            clean_s = summary_val.replace("\n", " ")
+            if len(clean_s) > 110:
+                clean_s = clean_s[:107] + "..."
+            card_label += f"  \n📑 *Key Summary: {clean_s}*"
     if st.button(
-        f"**{title}**  \n{meta}",
+        card_label,
         key=key,
         type="tertiary",
         icon=icon,
@@ -2233,7 +2495,10 @@ def render_patient_portal() -> None:
         )
 
         with appointments_tab:
-            _, head_b = st.columns([1.6, 0.4], vertical_alignment="center")
+            _, head_ingest, head_b = st.columns([1.2, 0.45, 0.35], vertical_alignment="center")
+            with head_ingest:
+                if st.button("📄 Ingest Doc", key="ingest_appointment_tab", use_container_width=True):
+                    ingest_appointment_document_dialog()
             with head_b:
                 if st.button("＋ Add", key="new_appointment_tab", use_container_width=True):
                     add_item_dialog("New appointment")

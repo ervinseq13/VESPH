@@ -277,6 +277,8 @@ def fetch_patient_snapshot(client: Client, patient_id: str | None = None) -> dic
                 "status": appt.get("status", "Confirmed"),
                 "type": appt.get("appointment_type", "FollowUp"),
                 "preparation": appt.get("appointment_summary") or "Bring your latest reports.",
+                "summary": appt.get("appointment_summary") or "",
+                "appointment_summary": appt.get("appointment_summary") or "",
             }
         )
 
@@ -562,17 +564,20 @@ def fetch_patient_snapshot(client: Client, patient_id: str | None = None) -> dic
     initials = "".join(part[0].upper() for part in full_name.split()[:2]) or "PT"
 
     # Assemble summary text
-    diag_summary_text = (
-        f"Latest diagnostics from {diagnostics[0]['date']}: {diagnostics[0]['name']} is {diagnostics[0]['status'].lower()}. {diagnostics[0]['summary']}"
-        if diagnostics
-        else "No pending diagnostic reports."
-    )
-    med_summary_text = (
-        f"{len(medications)} active prescriptions on file, including {medications[0]['name']} ({medications[0]['instruction']})."
-        if medications
-        else "No active prescriptions."
-    )
-    # Agentic appointment and diagnostic summary generated from the last 6 months + upcoming schedule
+    # Assemble summary text dynamically from live care records
+    if diagnostics:
+        diag_items = [f"{d['name']} ({d['status'].lower()})" for d in diagnostics[:2]]
+        diag_summary_text = f"Latest diagnostics from {diagnostics[0]['date']}: {'; '.join(diag_items)}. {diagnostics[0].get('summary', '')}"
+    else:
+        diag_summary_text = "No pending diagnostic reports."
+
+    if medications:
+        med_names = [f"{m['name']} ({m.get('instruction', 'as directed')})" for m in medications[:3]]
+        med_summary_text = f"{len(medications)} active prescriptions on file: {', '.join(med_names)}."
+    else:
+        med_summary_text = "No active prescriptions."
+
+    # Agentic appointment and diagnostic summary generated from live care history + upcoming schedule
     up_diag_str = None
     if diagnostic_schedule:
         ds = diagnostic_schedule[0]
@@ -582,21 +587,15 @@ def fetch_patient_snapshot(client: Client, patient_id: str | None = None) -> dic
     future_appts = [a for a in appointments if not _is_past_appt(a)]
     if future_appts:
         fa = future_appts[0]
-        up_appt_str = f"Surgical follow-up: {fa.get('doctor', 'Dr. Rhea Mehta')} on {fa.get('date', '22 Oct')} ({fa.get('time', '11:00 AM')})"
+        up_appt_str = f"Next appointment: {fa.get('type', 'Follow-up')} with {fa.get('doctor', 'Dr. Rhea Mehta')} on {fa.get('date')} ({fa.get('time')})"
 
-    # 6-Month history highlights (April 2026 – Oct 2026)
+    # Dynamic consultation history highlights from real clinical records
     recent_events = []
-    for c in consultations:
-        raw_dt = str(c.get("created_at_raw") or c.get("date") or "")
-        diag = str(c.get("diagnosis") or "").lower()
-        doc = str(c.get("doctor") or "").lower()
-        if "2026" in raw_dt:
-            if "append" in diag or "appendectomy" in diag:
-                recent_events.append("Emergency appendectomy (Oct 2026)")
-            elif "pulmonary" in diag or "asthma" in diag or "kulkarni" in doc:
-                recent_events.append("Pre-op pulmonary clearance (Sep 2026)")
-            elif "iron" in diag or "ferritin" in diag or "rao" in doc:
-                recent_events.append("Internal medicine review (Aug 2026)")
+    for c in consultations[:3]:
+        c_diag = str(c.get("diagnosis") or "").strip()
+        c_dt = str(c.get("date") or "")
+        if c_diag:
+            recent_events.append(f"{c_diag} ({c_dt})" if c_dt else c_diag)
 
     seen_events = set()
     unique_recent = []
@@ -605,7 +604,7 @@ def fetch_patient_snapshot(client: Client, patient_id: str | None = None) -> dic
             seen_events.add(e)
             unique_recent.append(e)
 
-    history_highlights = ", ".join(unique_recent[:2]) if unique_recent else "emergency laparoscopic appendectomy with clean recovery"
+    history_highlights = "; ".join(unique_recent[:2]) if unique_recent else "Laparoscopic appendectomy with clean recovery"
 
     summary_parts = []
     if up_diag_str and up_appt_str:
@@ -617,7 +616,7 @@ def fetch_patient_snapshot(client: Client, patient_id: str | None = None) -> dic
     else:
         summary_parts.append("No immediate visits scheduled.")
 
-    summary_parts.append(f"Past 6 months: {history_highlights}.")
+    summary_parts.append(f"Recent care events: {history_highlights}.")
     appt_summary_text = " ".join(summary_parts)
 
     patient_dict = {
